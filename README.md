@@ -121,6 +121,7 @@ SCATTER
  - ISA Specification: Done
  - Encoding Specification: Done
  - Execution Model: Done
+ - Runtime Engine Design: Done
  - Interpreter: In Progress
  - JIT Compiler: Planned
 
