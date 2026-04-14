@@ -34,7 +34,7 @@ All instructions share a common high-level structure:
 
 ### 4.1 R-Type (Register-Register ALU)
 
-`[ OPCODE | SUBOP | RD | RS1 | RS2 | UNUSED (10) ]`
+`[ OPCODE (6) | SUBOP (6) | RD (5) | RS1 (5) | RS2 (5) ]`
 
  - `RD`: destination register
  - `RS1`, `RS2`: source registers
@@ -43,7 +43,7 @@ All instructions share a common high-level structure:
 
 ### 4.2 I-Type (Immediate)
 
-`[ OPCODE | SUBOP | RD | RS1 | UNUSED | IMM (10) ] `
+`[ OPCODE (6) | SUBOP (6) | RD (5) | RS1 (5) | IMM (10) ] `
 
  - `RD`: destination register
  - `RS1`: source register
@@ -53,7 +53,7 @@ All instructions share a common high-level structure:
 
 ### 4.3 B-Type (Branch)
 
-`[ OPCODE | SUBOP | UNUSED | RS1 | UNUSED | OFFSET (10) ]`
+`[ OPCODE (6) | SUBOP (6) | UNUSED (5) | RS1 (5) | OFFSET (10) ]`
 
  - `RS1`: source register
  - `OFFSET`: signed relative jump
@@ -62,7 +62,7 @@ All instructions share a common high-level structure:
 
 ### 4.4 G-Type (Graph Operations)
 
-` [ OPCODE | SUBOP | RD | MODE | UNUSED | PARAM (10) ]`
+` [ OPCODE (6) | SUBOP (6) | RD (5) | MODE (5) | PARAM (10) ]`
 
  - `RD`: destination register
  - `MODE`: graph execution mode
@@ -74,7 +74,7 @@ All instructions share a common high-level structure:
 
 ### 4.5 S-Tyep (System / Control)
 
-`[ OPCODE | SUBOP | UNUSED | RS1 | UNUSED | FLAGS (10) ]`
+`[ OPCODE (6) | SUBOP (6) | UNUSED (5) | RS1 (5) | FLAGS (10) ]`
 
  - `RS1`: source register
  - `FLAGS`: operation-specific flags
