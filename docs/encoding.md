@@ -72,7 +72,7 @@ All instructions share a common high-level structure:
 
 ---
 
-### 4.5 S-Tyep (System / Control)
+### 4.5 S-Type (System / Control)
 
 `[ OPCODE (6) | SUBOP (6) | UNUSED (5) | RS1 (5) | FLAGS (10) ]`
 
