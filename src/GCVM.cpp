@@ -86,15 +86,15 @@ void GCVM::exec_alu(const Instruction &inst, Context &ctx) {
             break;
         case SUBOP_MIN:
             assert(inst.rd() < R_COUNT && inst.rs1() < R_COUNT && inst.rs2() < R_COUNT);
-            ctx.regs[inst.rd()] = ctx.regs[inst.rs1()] < ctx.regs[inst.rs2()] ? ctx.regs[inst.rs1()] : ctx.regs[inst.rs2()];
+            ctx.regs[inst.rd()] = (ctx.regs[inst.rs1()] < ctx.regs[inst.rs2()]) ? ctx.regs[inst.rs1()] : ctx.regs[inst.rs2()];
             break;
         case SUBOP_MAX:
             assert(inst.rd() < R_COUNT && inst.rs1() < R_COUNT && inst.rs2() < R_COUNT);
-            ctx.regs[inst.rd()] = ctx.regs[inst.rs1()] > ctx.regs[inst.rs2()] ? ctx.regs[inst.rs1()] : ctx.regs[inst.rs2()];
+            ctx.regs[inst.rd()] = (ctx.regs[inst.rs1()] > ctx.regs[inst.rs2()]) ? ctx.regs[inst.rs1()] : ctx.regs[inst.rs2()];
             break;
         case SUBOP_ABS:
             assert(inst.rd() < R_COUNT && inst.rs1() < R_COUNT);
-            ctx.regs[inst.rd()] = ctx.regs[inst.rs1()] < 0 ? -ctx.regs[inst.rs1()] : ctx.regs[inst.rs1()];
+            ctx.regs[inst.rd()] = (ctx.regs[inst.rs1()] < 0) ? -ctx.regs[inst.rs1()] : ctx.regs[inst.rs1()];
             break;
         case SUBOP_MOV:
             assert(inst.rd() < R_COUNT && inst.rs1() < R_COUNT);
@@ -103,6 +103,22 @@ void GCVM::exec_alu(const Instruction &inst, Context &ctx) {
         case SUBOP_LOADI:
             assert(inst.rd() < R_COUNT);
             ctx.regs[inst.rd()] = inst.imm();
+            break;
+        case SUBOP_CMPLT:
+            assert(inst.rd() < R_COUNT && inst.rs1() < R_COUNT && inst.rs2() < R_COUNT);
+            ctx.regs[inst.rd()] = (ctx.regs[inst.rs1()] < ctx.regs[inst.rs2()]) ? 1 : 0;
+            break;
+        case SUBOP_CMPLTE:
+            assert(inst.rd() < R_COUNT && inst.rs1() < R_COUNT && inst.rs2() < R_COUNT);
+            ctx.regs[inst.rd()] = (ctx.regs[inst.rs1()] <= ctx.regs[inst.rs2()]) ? 1 : 0;
+            break;
+        case SUBOP_CMPEQ:
+            assert(inst.rd() < R_COUNT && inst.rs1() < R_COUNT && inst.rs2() < R_COUNT);
+            ctx.regs[inst.rd()] = (ctx.regs[inst.rs1()] == ctx.regs[inst.rs2()]) ? 1 : 0;
+            break;
+        case SUBOP_CMPNEQ:
+            assert(inst.rd() < R_COUNT && inst.rs1() < R_COUNT && inst.rs2() < R_COUNT);
+            ctx.regs[inst.rd()] = (ctx.regs[inst.rs1()] != ctx.regs[inst.rs2()]) ? 1 : 0;
             break;
     }
 }

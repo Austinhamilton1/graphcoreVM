@@ -22,7 +22,7 @@ All instructions are 32 bits wide and use structured formats with clearly define
 
 All instructions share a common high-level structure:
 
-`[ OPCODE (6) | SUBOP (6) | FIELD_A (5) | FIELD_B (5) | FIELD_C/IMM (10) ]`
+`[ OPCODE (4) | SUBOP (4) | FIELD_A (5) | FIELD_B (5) | FIELD_C/IMM (14) ]`
 
  - `OPCODE`: major instruction category
  - `SUBOP`: specific operation within category
@@ -34,7 +34,7 @@ All instructions share a common high-level structure:
 
 ### 4.1 R-Type (Register-Register ALU)
 
-`[ OPCODE (6) | SUBOP (6) | RD (5) | RS1 (5) | RS2 (5) ]`
+`[ OPCODE (4) | SUBOP (4) | RD (5) | RS1 (5) | RS2 (5) ]`
 
  - `RD`: destination register
  - `RS1`, `RS2`: source registers
@@ -43,7 +43,7 @@ All instructions share a common high-level structure:
 
 ### 4.2 I-Type (Immediate)
 
-`[ OPCODE (6) | SUBOP (6) | RD (5) | RS1 (5) | IMM (10) ] `
+`[ OPCODE (4) | SUBOP (4) | RD (5) | RS1 (5) | IMM (14) ] `
 
  - `RD`: destination register
  - `RS1`: source register
@@ -53,7 +53,7 @@ All instructions share a common high-level structure:
 
 ### 4.3 B-Type (Branch)
 
-`[ OPCODE (6) | SUBOP (6) | UNUSED (5) | RS1 (5) | OFFSET (10) ]`
+`[ OPCODE (4) | SUBOP (4) | UNUSED (5) | RS1 (5) | OFFSET (14) ]`
 
  - `RS1`: source register
  - `OFFSET`: signed relative jump
@@ -62,7 +62,7 @@ All instructions share a common high-level structure:
 
 ### 4.4 G-Type (Graph Operations)
 
-` [ OPCODE (6) | SUBOP (6) | RD (5) | MODE (5) | PARAM (10) ]`
+` [ OPCODE (4) | SUBOP (4) | RD (5) | MODE (5) | PARAM (14) ]`
 
  - `RD`: destination register
  - `MODE`: graph execution mode
@@ -74,7 +74,7 @@ All instructions share a common high-level structure:
 
 ### 4.5 S-Type (System / Control)
 
-`[ OPCODE (6) | SUBOP (6) | UNUSED (5) | RS1 (5) | FLAGS (10) ]`
+`[ OPCODE (4) | SUBOP (4) | UNUSED (5) | RS1 (5) | FLAGS (14) ]`
 
  - `RS1`: source register
  - `FLAGS`: operation-specific flags
@@ -120,6 +120,10 @@ All instructions share a common high-level structure:
 | 0x06 | ABS |
 | 0x07 | MOV |
 | 0x08 | LOADI |
+| 0x09 | CMP_LT |
+| 0x10 | CMP_LTE |
+| 0x11 | CMP_EQ |
+| 0x12 | CMP_NEQ |
 
 ---
 
