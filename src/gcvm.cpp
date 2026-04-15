@@ -506,7 +506,7 @@ void GCVM::run() {
 
     while(!converged) {
         // 1. Iterate active vertices
-        //#pragma omp parallel for
+        #pragma omp parallel for
         for(int v = 0; v < num_vertices; v++) {
             // Only iterate over active vertices
             if(vertices.active[v]) {
