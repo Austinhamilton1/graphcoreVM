@@ -5,8 +5,8 @@
 #include <initializer_list>
 #include <atomic>
 
-#include "Graph.h"
-#include "Program.h"
+#include "graph.h"
+#include "program.h"
 
 #define R_COUNT 32
 
@@ -49,6 +49,7 @@ private:
     Graph graph;
     Program program;
     VertexState vertices;
+    int num_vertices;
     std::atomic<size_t> updates;
 
     /*
@@ -98,7 +99,49 @@ private:
      */
     void exec_system(const Instruction &inst);
 
+    /*
+     * Load a new Context based on the vertex.
+     * Arguments:
+     *     Context &ctx - Load this context.
+     *     uint32_t vertex_id - Load context for this vertex.
+     */
+    void load_context(Context &ctx, uint32_t vertex_id);
+
+    /*
+     * Store a used Context into the vertex shared memory.
+     * Arguments:
+     *     const Context &ctx - Store this context.
+     *     uint32_t vertex_id - Store context for this vertex.
+     */
+    void store_context(const Context &ctx, uint32_t vertex_id);
+
+    /*
+     * Update the active vertex list.
+     * Returns:
+     *     int - Number of updates applied. 
+     */
+    int update_active_vertices();
+
+    /*
+     * Check for the convergence of the kernel (count VOTE_CHANGE signals).
+     * Returns:
+     *     bool - true if the kernel has converged, false otherwise.
+     */
+    bool check_convergence();
+
+    /*
+     * Execute the kernel on a vertex given its context and vertex ID.
+     * Arguments:
+     *     Context &ctx - Execute with this context (register values).
+     *     uint32_t vertex_id - Execute on this vertex.
+     */
+    void execute_vertex(Context &ctx, uint32_t vertex_id);
+
 public:
+    /* Default constructor and destructor. */
+    GCVM() : num_vertices(0), updates(0) {}
+    ~GCVM() = default;
+
     /*
      * Load a graph into the graph runtime.
      * Arguments:
@@ -121,15 +164,28 @@ public:
     void set_seed_vertices(std::initializer_list<uint32_t> vertices);
 
     /*
-     * Execute the kernel on a vertex given its context and vertex ID.
+     * Set seed vertices to be initially active.
      * Arguments:
-     *     Context &ctx - Execute with this context (register values).
-     *     uint32_t vertex_id - Execute on this vertex.
+     *     bool all - Initialize all vertices if true.
      */
-    void execute_vertex(Context &ctx, uint32_t vertex_id);
+    void set_seed_vertices(bool all);
+
+    /*
+     * Set the initial value of v_self.
+     * Arguments:
+     *     double value - The value to seed the graph with.
+     */
+    void set_seed_self(double value);
 
     /*
      * Run the program on the VM.
      */
     void run();
+
+    /*
+     * Report the results of running the kernel.
+     * Returns:
+     *     const std::vector<double> & - Copy of the results calculated.
+     */
+    const std::vector<double> &get_results() const;
 };

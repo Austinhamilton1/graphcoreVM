@@ -169,9 +169,43 @@ Params: RD = IMM
 Description: Load an immediate value into a register
 ```
 
+### 4.4 Comparison
+
+**CMP_LT**
+```
+Opcode: 0x01
+Subop:  0x09
+Params: RD = RS1 < RS2 ? 1 : 0
+Description: Determine if RS1 is less than RS2
+```
+
+**CMP_LTE**
+```
+Opcode: 0x01
+Subop:  0x10
+Params: RD = RS1 <= RS2 ? 1 : 0
+Description: Determine if RS1 is less than or equal to RS2
+```
+
+**CMP_EQ**
+```
+Opcode: 0x01
+Subop:  0x11
+Params: RD = RS1 == RS2 ? 1 : 0
+Description: Determine if RS1 is equal to RS2
+```
+
+**CMP_NEQ**
+```
+Opcode: 0x01
+Subop:  0x12
+Params: RD = RS1 != RS2 ? 1 : 0
+Description: Determine if RS1 is not equal to RS2
+```
+
 ---
 
-### 4.4 Graph Memory Access
+### 4.5 Graph Memory Access
 
 **LOADV**
 ```
@@ -199,7 +233,7 @@ Description: Load an edge attribute
 
 ---
 
-### 4.5 Traversal Instructions
+### 4.6 Traversal Instructions
 
 **ITER_NEIGHBORS**
 ```
@@ -217,7 +251,7 @@ Description: End iteration block
 
 ---
 
-### 4.6 Gather Instructions
+### 4.7 Gather Instructions
 
 **GATHER_SUM**
 ```
@@ -253,7 +287,7 @@ Description: Accumulate count over neighbors
 
 ---
 
-### 4.7 Scatter Instructions
+### 4.8 Scatter Instructions
 
 **SCATTER**
 ```
@@ -272,13 +306,7 @@ Description: Propagate v_out to neighbors if RS1 is non-zero
 
 ---
 
-### 4.8 Synchronization
-
-**BARRIER**
-```
-Opcode: 0x70
-Description: Synchronize all vertices
-```
+### 4.9 Synchronization
 
 **VOTE_CHANGE**
 ```

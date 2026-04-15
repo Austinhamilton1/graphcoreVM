@@ -156,8 +156,7 @@ All instructions share a common high-level structure:
 
 | SUBOP | Instruction |
 | ----- | ----------- |
-| 0x00 | BARRIER |
-| 0x01 | VOTE_CHANGE |
+| 0x00 | VOTE_CHANGE |
 
 ---
 
