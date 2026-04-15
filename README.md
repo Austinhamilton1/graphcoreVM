@@ -156,9 +156,6 @@ By defining an ISA, execution model, and rutime from the ground up, GCVM enables
 mkdir build && cd build
 cmake ..
 make 
-
-# Run (future)
-./gcvm examples/pagerank.gcvm
 ```
 
 ---
