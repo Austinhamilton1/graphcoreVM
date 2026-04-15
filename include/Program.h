@@ -52,29 +52,29 @@
 struct Instruction {
     uint32_t raw;
 
-    // Return the opcode (bits 0 - 5)
+    // Return the opcode (bits 0 - 3)
     uint8_t opcode() const {
-        return (raw >> 21) & 0x3F;
+        return (raw >> 28) & 0x0F;
     }
 
-    // Return the subop (bits 6 - 11)
+    // Return the subop (bits 4 - 7)
     uint8_t subop() const {
-        return (raw >> 15) & 0x3F;
+        return (raw >> 24) & 0x0F;
     }
 
-    // Return the destination register (bits 12 - 16)
+    // Return the destination register (bits 8 - 12)
     uint8_t rd() const {
-        return (raw >> 10) & 0x1F;
+        return (raw >> 19) & 0x1F;
     }
 
-    // Return the first source register (bits 17 - 21)
+    // Return the first source register (bits 13 - 17)
     uint8_t rs1() const {
-        return (raw >> 5) & 0x1F;
+        return (raw >> 14) & 0x1F;
     }
 
-    // Return the mode value (bits 17 - 21)
+    // Return the mode value (bits 13 - 17)
     uint8_t mode() const {
-        return (raw >> 5) & 0x1F;
+        return (raw >> 14) & 0x1F;
     }
 
     // Return the second source register (bits 27 - 31)
@@ -82,21 +82,21 @@ struct Instruction {
         return raw & 0x1F;
     }
 
-    // Return the immediate value (bits 22 - 31)
+    // Return the immediate value (bits 18 - 31)
     int16_t imm() const {
-        int16_t raw_data = raw & 0x03FF;
-        return (static_cast<int16_t>(raw_data << 6)) >> 6;    
+        int16_t raw_data = raw & 0x3FFF;
+        return (static_cast<int16_t>(raw_data << 2)) >> 2;    
     }
 
-    // Return the offset value (bits 22 - 31)
+    // Return the offset value (bits 18 - 31)
     int16_t offset() const {
-        int16_t raw_data = raw & 0x03FF;
+        int16_t raw_data = raw & 0x3FFF;
         return (static_cast<int16_t>(raw_data << 6)) >> 6;
     }
 
-    // Return the flags value (bits 22 - 31)
+    // Return the flags value (bits 18 - 31)
     uint16_t flags() const {
-        return raw & 0x03FF;
+        return raw & 0x3FFF;
     }
 };
 
