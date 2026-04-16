@@ -156,6 +156,13 @@ By defining an ISA, execution model, and rutime from the ground up, GCVM enables
 mkdir build && cd build
 cmake ..
 make 
+
+# Building bytecode and graph files
+./gcvmasm ../examples/{example}/{example}.gcvm -o {example}.hex
+./graphasm ../examples/{example}/{example}.graph -o {example}.g
+
+# Running
+./gcvm -b {example}.hex -g {example}.g -s [seed value (set for all vertices)] -o [output file (defaults to stdout)]
 ```
 
 ---
