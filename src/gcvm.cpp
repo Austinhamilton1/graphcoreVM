@@ -10,7 +10,7 @@
 #include "graphcore.h"
 
 int main(int argc, char **argv) {
-    if(argc != 9) {
+    if(argc != 7 && argc != 9) {
         std::cerr << "Program usage: " << argv[0] << " -b [bytecode file] -g [graph file] -s [seed value] -o [output file]\n";
         return -1;
     }
