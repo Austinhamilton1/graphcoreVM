@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
     std::string bytecode_file;
     std::string graph_file;
     std::string output_file;
-    double seed_value;
+    double seed_value = 0.0;
 
     // Parse arguments
     for(int i = 1; i < argc; i++) {
