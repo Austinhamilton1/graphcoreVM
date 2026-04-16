@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <vector>
+#include <string>
+#include <fstream>
 
 #define OPCODE_CONTROL          0x00
 #define OPCODE_ALU              0x01
@@ -149,4 +151,24 @@ struct Instruction {
  */
 struct Program {
     std::vector<Instruction> code;
+
+    /*
+     * Read bytecode from a binary instruction file.
+     * Arguments:
+     *     const std::string& filename - Name of the bytecode file.
+     */
+    void from_file(const std::string& filename) {
+        std::ifstream file(filename, std::ios::binary);
+
+        if(!file.is_open()) {
+            throw std::runtime_error("Could not open bytecode file");
+        }
+
+        // Read in an instruction at a time
+        uint32_t raw_instr;
+        while(file.read(reinterpret_cast<char *>(&raw_instr), sizeof(raw_instr))) {
+            Instruction instr = { raw_instr };
+            code.push_back(instr);
+        }
+    }
 };

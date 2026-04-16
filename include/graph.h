@@ -1,9 +1,10 @@
-#pragma
+#pragma once
 
 #include <vector>
 #include <cstdint>
 #include <cassert>
 #include <algorithm>
+#include <fstream>
 
 struct Edge {
     uint32_t src;
@@ -107,6 +108,38 @@ struct Graph {
     void build(const std::vector<Edge>& edges, size_t V) {
         build_outgoing(edges, V);
         build_incoming(edges, V);
+    }
+
+    /*
+     * Build the CSR (outgoing and incoming) from a binary file.
+     * Arguments:
+     *     const std::string& filename - Name of the binary file
+     */
+    void build_from_file(const std::string& filename) {
+        std::ifstream file(filename, std::ios::binary);
+
+        if(!file.is_open()) {
+            throw std::runtime_error("Could not open graph file");
+        }
+
+        // Read the number of vertices in the file
+        size_t num_vertices;
+        if(!file.read(reinterpret_cast<char *>(&num_vertices), sizeof(num_vertices))) {
+            throw std::runtime_error("No vertex count in graph file.");
+        }
+
+        // This will store all the edges read
+        std::vector<Edge> edges;
+
+        // Each edge will be temporarily put here
+        Edge edge;
+        while(file.read(reinterpret_cast<char *>(&edge.src), sizeof(edge.src)) &&
+              file.read(reinterpret_cast<char *>(&edge.dst), sizeof(edge.dst)) &&
+              file.read(reinterpret_cast<char *>(&edge.weight), sizeof(edge.weight))) {
+                edges.push_back(edge);
+        }
+
+        build(edges, num_vertices);
     }
 
     size_t size() const {
