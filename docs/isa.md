@@ -310,7 +310,8 @@ Description: Propagate v_out to neighbors if RS1 is non-zero
 
 **VOTE_CHANGE**
 ```
-Opcode: 0x71
+Opcode: 0x04
+Subop:  0x00
 Description: Contribute to convergence detection
 ```
 

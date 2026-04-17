@@ -77,7 +77,7 @@ int main(int argc, char **argv) {
     runtime.set_seed_vertices(true);
     runtime.load_program(program);
 
-    runtime.run();
+    runtime.run(false);
 
     auto results = runtime.get_results();
 

@@ -5,6 +5,7 @@
 #include <cassert>
 #include <algorithm>
 #include <fstream>
+#include <string>
 
 struct Edge {
     uint32_t src;

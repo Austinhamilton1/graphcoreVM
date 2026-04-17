@@ -7,8 +7,10 @@
 
 #include "graph.h"
 #include "program.h"
+#include "lowered_ir.h"
 
 #define R_COUNT 32
+
 
 /*
  * Vertex state held across execution runs.
@@ -34,11 +36,17 @@ struct Context {
     double v_out;       // Write-only next value of node
 
     double n_val;       // Iterator (next neighbor node ID)
+    size_t in_deg;      // Node in-degree
+    size_t out_deg;     // Node out-degree
+    size_t g_size;      // Graph size
     double e_attr;      // Iterator (next edge attribute)
 
     uint32_t iter_edge; // Current edge index
     uint32_t iter_end;  // End of adjacency list
 };
+
+class GCVM;
+using JITFunc = void(*)(Context *, uint32_t, GCVM *);
 
 /* 
  * Graph Runtime. This class manages the runtime.
@@ -46,11 +54,12 @@ struct Context {
  */
 class GCVM {
 private:
-    Graph graph;
-    Program program;
-    VertexState vertices;
-    int num_vertices;
-    std::atomic<size_t> updates;
+    Graph graph;                    // CSR format graph
+    Program program;                // Bytecode program
+    VertexState vertices;           // SoA of vertex states
+    std::atomic<size_t> updates;    // Number of vertices affected by kernel
+    std::vector<LInstruction> lir;  // Lowered IR representation for JIT compilation
+    JITFunc jit_compiled;
 
     /*
      * Execute a CONTROL operation.
@@ -63,6 +72,13 @@ private:
      */
     int exec_control(const Instruction &inst, Context &ctx, int pc);
 
+    /* Dispatch functions for CONTROL operations. */
+    int exec_nop(const Instruction &inst, Context &ctx, int pc);
+    int exec_halt(const Instruction &inst, Context &ctx, int pc);
+    int exec_jmp(const Instruction &inst, Context &ctx, int pc);
+    int exec_jz(const Instruction &inst, Context &ctx, int pc);
+    int exec_jnz(const Instruction &inst, Context &ctx, int pc);
+
     /*
      * Execute an ALU operation.
      * Arguments:
@@ -70,6 +86,21 @@ private:
      *     Context &ctx - Vertex context.
      */
     void exec_alu(const Instruction &inst, Context &ctx);
+
+    /* Dispatch functions for ALU operations. */
+    void exec_add(const Instruction &inst, Context &ctx);
+    void exec_sub(const Instruction &inst, Context &ctx);
+    void exec_mul(const Instruction &inst, Context &ctx);
+    void exec_div(const Instruction &inst, Context &ctx);
+    void exec_min(const Instruction &inst, Context &ctx);
+    void exec_max(const Instruction &inst, Context &ctx);
+    void exec_abs(const Instruction &inst, Context &ctx);
+    void exec_mov(const Instruction &inst, Context &ctx);
+    void exec_loadi(const Instruction &inst, Context &ctx);
+    void exec_cmp_lt(const Instruction &inst, Context &ctx);
+    void exec_cmp_lte(const Instruction &inst, Context &ctx);
+    void exec_cmp_eq(const Instruction &inst, Context &ctx);
+    void exec_cmp_neq(const Instruction &inst, Context &ctx);
 
     /*
      * Execute a MEMORY operation.
@@ -79,6 +110,11 @@ private:
      *     uint32_t vertex_id - Vertex to operate on.
      */
     void exec_memory(const Instruction &inst, Context &ctx, uint32_t vertex_id);
+
+    /* Dispatch functions for MEMORY operations. */
+    void exec_loadv(const Instruction &inst, Context &ctx, uint32_t vertex_id);
+    void exec_storev(const Instruction &inst, Context &ctx, uint32_t vertex_id);
+    void exec_loade(const Instruction &inst, Context &ctx, uint32_t vertex_id);
 
     /*
      * Execute a GRAPH operation.
@@ -92,12 +128,25 @@ private:
      */
     int exec_graph(const Instruction &inst, Context &ctx, uint32_t vertex_id, int pc);
 
+    /* Dispatch functions for GRAPH operations. */
+    int exec_iter_neighbors(const Instruction &inst, Context &ctx, uint32_t vertex_id, int pc);
+    int exec_end_iter(const Instruction &inst, Context &ctx, uint32_t vertex_id, int pc);
+    int exec_gather_sum(const Instruction &inst, Context &ctx, uint32_t vertex_id, int pc);
+    int exec_gather_min(const Instruction &inst, Context &ctx, uint32_t vertex_id, int pc);
+    int exec_gather_max(const Instruction &inst, Context &ctx, uint32_t vertex_id, int pc);
+    int exec_gather_count(const Instruction &inst, Context &ctx, uint32_t vertex_id, int pc);
+    int exec_scatter(const Instruction &inst, Context &ctx, uint32_t vertex_id, int pc);
+    int exec_scatter_if(const Instruction &inst, Context &ctx, uint32_t vertex_id, int pc);
+
     /*
      * Execute a SYSTEM operation.
      * Arguments:
      *     const Instruction &inst - Instruction to exectute.
      */
     void exec_system(const Instruction &inst);
+
+    /* Dispatch functions for SYSTEM operations. */
+    void exec_vote_change(const Instruction &inst);
 
     /*
      * Load a new Context based on the vertex.
@@ -137,9 +186,16 @@ private:
      */
     void execute_vertex(Context &ctx, uint32_t vertex_id);
 
+    /*
+     * Compile parts of the graph kernel.
+     * Returns:
+     *     JITFunc - JIT compiled kernel.
+     */
+    JITFunc jit_compile();
+
 public:
     /* Default constructor and destructor. */
-    GCVM() : num_vertices(0), updates(0) {}
+    GCVM() : updates(0), jit_compiled(nullptr) {}
     ~GCVM() = default;
 
     /*
@@ -178,9 +234,21 @@ public:
     void set_seed_self(double value);
 
     /*
-     * Run the program on the VM.
+     * Pass over the bytecode and convert it to lowered IR.
      */
-    void run();
+    void lower();
+
+    /*
+     * Print the lowered IR of the program.
+     */
+    void dump_lir();
+
+    /*
+     * Run the program on the VM.
+     * Arguments:
+     *     bool compile - Should we JIT parts of the kernel?
+     */
+    void run(bool compile);
 
     /*
      * Report the results of running the kernel.
