@@ -816,6 +816,150 @@ void GCVM::dump_lir() {
 }
 
 /*
+ * JIT call for ITER_BEGIN.
+ * Arguments:
+ *     GCVM *vm - Current VM instance.
+ *     Context *ctx - Current context.
+ *     uint32_t vertex - Iterate neighbors of this vertex.
+ * Returns:
+ *     bool - true if iteration is non-empty, false otherwise.
+ */
+extern "C" bool gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex) {
+    // Initialize iterators
+    ctx->iter_edge = vm->graph.incoming_row_offsets[vertex];
+    ctx->iter_end = vm->graph.incoming_row_offsets[vertex + 1];
+
+    if(ctx->iter_edge >= ctx->iter_end) {
+        // Iterator is empty
+        return false;
+    }
+
+    // Load first neighbor
+    uint32_t e = ctx->iter_edge;
+    ctx->n_val = vm->vertices.v_self[vm->graph.incoming_col_indices[e]];
+    if(!vm->graph.incoming_edge_attr.empty()) {
+        ctx->e_attr = vm->graph.incoming_edge_attr[e];
+    }
+
+    // Non-empty iterator
+    return true;
+}
+
+/*
+ * JIT call for ITER_NEXT.
+ * Arguments:
+ *     GCVM *vm - Current VM instance.
+ *     Context *ctx - Current context.
+ *     uint32_t vertex - Iterate neighbors of this vertex.
+ * Returns:
+ *     bool - true if iteration is non-empty, false otherwise.
+ */
+extern "C" bool gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex) {
+    ctx->iter_edge++;
+
+    if(ctx->iter_edge < ctx->iter_end) {
+        // Load next neighbor
+        uint32_t e = ctx->iter_edge;
+        ctx->n_val = vm->vertices.v_self[vm->graph.incoming_col_indices[e]];
+        if(!vm->graph.incoming_edge_attr.empty()) {
+            ctx->e_attr = vm->graph.incoming_edge_attr[e];
+        }
+
+        return true; // Non-empty iterator
+    }
+
+    // Empty iterator
+    return false;
+}
+
+/*
+ * JIT call for GATHER_SUM.
+ * Arguments:
+ *     GCVM *vm - Current VM instance.
+ *     uint32_t vertex - Gather neighbors of this vertex.
+ * Returns:
+ *     double - Result of GATHER_SUM.
+ */
+extern "C" double gcvm_gather_sum(GCVM *vm, uint32_t vertex) {
+    double sum = 0.0;
+    for(auto e = vm->graph.incoming_row_offsets[vertex]; e < vm->graph.incoming_row_offsets[vertex + 1]; e++) {
+        uint32_t n = vm->graph.incoming_col_indices[e];
+        sum += vm->vertices.v_self[n];
+    }
+    return sum;
+}
+
+/*
+ * JIT call for GATHER_MIN.
+ * Arguments:
+ *     GCVM *vm - Current VM instance.
+ *     uint32_t vertex - Gather neighbors of this vertex.
+ * Returns:
+ *     double - Result of GATHER_MIN.
+ */
+extern "C" double gcvm_gather_min(GCVM *vm, uint32_t vertex) {
+    double min = __DBL_MAX__;
+    for(auto e = vm->graph.incoming_row_offsets[vertex]; e < vm->graph.incoming_row_offsets[vertex + 1]; e++) {
+        uint32_t n = vm->graph.incoming_col_indices[e];
+        double val = vm->vertices.v_self[n];
+        min = val < min ? val : min;
+    }
+    return min;
+}
+
+/*
+ * JIT call for GATHER_MAX.
+ * Arguments:
+ *     GCVM *vm - Current VM instance.
+ *     uint32_t vertex - Gather neighbors of this vertex.
+ * Returns:
+ *     double - Result of GATHER_MAX.
+ */
+extern "C" double gcvm_gather_max(GCVM *vm, uint32_t vertex) {
+    double max = __DBL_MIN__;
+    for(auto e = vm->graph.incoming_row_offsets[vertex]; e < vm->graph.incoming_row_offsets[vertex + 1]; e++) {
+        uint32_t n = vm->graph.incoming_col_indices[e];
+        double val = vm->vertices.v_self[n];
+        max = val > max ? val : max;
+    }
+    return max;
+}
+
+/*
+ * JIT call for GATHER_COUNT.
+ * Arguments:
+ *     GCVM *vm - Current VM instance.
+ *     uint32_t vertex - Gather neighbors of this vertex.
+ * Returns:
+ *     double - Result of GATHER_COUNT.
+ */
+extern "C" double gcvm_gather_count(GCVM *vm, uint32_t vertex) {
+    return vm->graph.in_degree(vertex);
+}
+
+/*
+ * JIT call for SCATTER & SCATTER_IF.
+ * Arguments:
+ *     GCVM *vm - Current VM instance.
+ *     uint32_t vertex - Scatter this vertex.
+ */
+extern "C" void gcvm_scatter(GCVM *vm, uint32_t vertex) {
+    for(auto e = vm->graph.row_offsets[vertex]; e < vm->graph.row_offsets[vertex + 1]; e++) {
+        uint32_t n = vm->graph.col_indices[e];
+        vm->vertices.next_active[n] = true;
+    }
+}
+
+/*
+ * JIT call for VOTE_CHANGE.
+ * Arguments:
+ *     GCVM *vm - Current VM instance.
+ */
+extern "C" void gcvm_vote_change(GCVM *vm) {
+    vm->updates.fetch_add(1, std::memory_order_relaxed);
+}
+
+/*
  * Load/Store a VM register.
  * Arguments:
  *     const x86::Gp& ctx - Pointer to context object.
@@ -827,6 +971,13 @@ static x86::Mem reg_mem(const x86::Gp& ctx, int reg_index) {
     return x86::ptr(ctx, offsetof(Context, regs) + reg_index * sizeof(double));
 }
 
+/*
+ * Load an immediate value into a register.
+ * Arguments:
+ *     x86::Assembler& a - Assembler to run commands on.
+ *     x86::Vec dst - Destination computer register.
+ *     double val - Value to load.
+ */
 static void load_imm(x86::Assembler& a, x86::Vec dst, double val) {
     uint64_t bits;
     mempcpy(&bits, &val, sizeof(bits));
@@ -1014,6 +1165,140 @@ JITFunc GCVM::jit_compile() {
                 // Load the value stored at ctx->e_attr
                 a.movsd(x86::xmm0, x86::ptr(ctx, offsetof(Context, e_attr)));
                 a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
+                a.jmp(labels[pc + 1]);
+                break;
+            }
+            case LOp::ITER_BEGIN: {
+                // Set up arguments
+                a.mov(x86::rdi, vm);
+                a.mov(x86::rsi, ctx);
+                a.mov(x86::rdx, vid);
+
+                // Call VM implementation
+                a.call(imm((void *)gcvm_iter_begin));
+
+                // Return in al -> test.
+                a.test(x86::al, x86::al);
+
+                // If false, jump to skip target
+                a.jz(labels[inst.target]);
+
+                // Else continue
+                a.jmp(labels[pc + 1]);
+                break;
+            }
+            case LOp::ITER_NEXT: {
+                // Set up arguments
+                a.mov(x86::rdi, vm);
+                a.mov(x86::rsi, ctx);
+                a.mov(x86::rdx, vid);
+
+                // Call VM implementation
+                a.call(imm((void *)gcvm_iter_next));
+
+                // Return in al -> test.
+                a.test(x86::al, x86::al);
+
+                // If false, jump to skip target
+                a.jnz(labels[inst.target]);
+
+                // Else continue
+                a.jmp(labels[pc + 1]);
+                break;
+            }
+            case LOp::GATHER_SUM: {
+                // Set up arguments
+                a.mov(x86::rdi, vm);
+                a.mov(x86::rsi, vid);
+
+                // Call VM implementation
+                a.call(imm((void *)gcvm_gather_sum));
+
+                // Return in xmm0
+                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
+
+                a.jmp(labels[pc + 1]);
+                break;
+            }
+            case LOp::GATHER_MIN: {
+                // Set up arguments
+                a.mov(x86::rdi, vm);
+                a.mov(x86::rsi, vid);
+
+                // Call VM implementation
+                a.call(imm((void *)gcvm_gather_min));
+
+                // Return in xmm0
+                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
+
+                a.jmp(labels[pc + 1]);
+                break;
+            }
+            case LOp::GATHER_MAX: {
+                // Set up arguments
+                a.mov(x86::rdi, vm);
+                a.mov(x86::rsi, vid);
+
+                // Call VM implementation
+                a.call(imm((void *)gcvm_gather_max));
+
+                // Return in xmm0
+                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
+
+                a.jmp(labels[pc + 1]);
+                break;
+            }
+            case LOp::GATHER_COUNT: {
+                // Set up arguments
+                a.mov(x86::rdi, vm);
+                a.mov(x86::rsi, vid);
+
+                // Call VM implementation
+                a.call(imm((void *)gcvm_gather_count));
+
+                // Return in xmm0
+                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
+
+                a.jmp(labels[pc + 1]);
+                break;
+            }
+            case LOp::SCATTER: {
+                // Set up arguments
+                a.mov(x86::rdi, vm);
+                a.mov(x86::rsi, vid);
+
+                // Call VM implementation
+                a.call(imm((void *)gcvm_scatter));
+
+                a.jmp(labels[pc + 1]);
+                break;
+            }
+            case LOp::SCATTER_IF: {
+                // Check condition first
+                a.movsd(x86::xmm0, reg_mem(ctx, inst.src1));
+                a.xorpd(x86::xmm1, x86::xmm1); // 0
+
+                // Check if xmm0 == xmm1 (0)
+                a.ucomisd(x86::xmm0, x86::xmm1);
+                a.je(labels[pc + 1]); // Skip if 0
+
+                // Set up arguments
+                a.mov(x86::rdi, vm);
+                a.mov(x86::rsi, vid);
+
+                // Call VM implementation
+                a.call(imm((void *)gcvm_scatter));
+
+                a.jmp(labels[pc + 1]);
+                break;
+            }
+            case LOp::VOTE_CHANGE: {
+                // Set up arguments
+                a.mov(x86::rdi, vm);
+
+                // Call VM implementation
+                a.call(imm((void *)gcvm_vote_change));
+
                 a.jmp(labels[pc + 1]);
                 break;
             }

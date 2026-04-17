@@ -61,6 +61,16 @@ private:
     std::vector<LInstruction> lir;  // Lowered IR representation for JIT compilation
     JITFunc jit_compiled;
 
+    /* Allow JIT functions access to GCVM internals. */
+    friend bool gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex);
+    friend bool gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex);
+    friend double gcvm_gather_sum(GCVM *vm, uint32_t vertex);
+    friend double gcvm_gather_min(GCVM *vm, uint32_t vertex);
+    friend double gcvm_gather_max(GCVM *vm, uint32_t vertex);
+    friend double gcvm_gather_count(GCVM *vm, uint32_t vertex);
+    friend void gcvm_scatter(GCVM *vm, uint32_t vertex);
+    friend void gcvm_vote_change(GCVM *vm);
+
     /*
      * Execute a CONTROL operation.
      * Arguments:
