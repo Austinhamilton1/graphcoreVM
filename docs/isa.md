@@ -231,6 +231,14 @@ Params: RD = edge[IMM], IMM = attr_id
 Description: Load an edge attribute
 ```
 
+**LOADG**
+```
+Opcode: 0x02
+Subop:  0x03
+Params: RD = graph.size
+Description: Load the graph size into a register
+```
+
 ---
 
 ### 4.6 Traversal Instructions

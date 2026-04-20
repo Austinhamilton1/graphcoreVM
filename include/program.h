@@ -34,6 +34,7 @@
 #define SUBOP_LOADV             0x00
 #define SUBOP_STOREV            0x01
 #define SUBOP_LOADE             0x02
+#define SUBOP_LOADG             0x03
 
 #define SUBOP_ITER_NEIGHBORS    0x00
 #define SUBOP_END_ITER          0x01

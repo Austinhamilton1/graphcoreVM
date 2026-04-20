@@ -12,7 +12,7 @@ start:
     ; r6 = (1 - d) / N
     LOADI r30, 1
     SUB r30, r30, r5
-    LOADV r6, 4 ; node_attr[4] = graph.size()
+    LOADG r6            ; r6 = graph.size()
     DIV r6, r30, r6
 
     ; Iterate over incoming neighbors
@@ -22,7 +22,7 @@ start:
             LOADV r2, 1 ; node_attr[1] = neighbor.v_self
 
             ; r3 = edge attr (1 / out degree)
-            LOADE r3, 0
+            LOADE r3
             JZ r3, skip
 
             ; r2 = r2 * r3
@@ -49,7 +49,7 @@ start:
         MOV r7, r1
 
         ; Write new value
-        STOREV r7, 0    ; node_attr[0] = v_self
+        STOREV r7       ; node_attr = v_self
 
         ; Convergence check
         ; diff = |old - new|

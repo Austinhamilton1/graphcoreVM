@@ -142,15 +142,18 @@ private:
         }
 
         // ---- MEMORY ----
-        else if (op == "LOADV" || op == "LOADE") {
+        else if (op == "LOADV") {
             expect(t, 3);
             inst.set_rd(parse_reg(t[1]));
             inst.set_imm(parse_imm(t[2]));
         }
+        else if(op == "LOADE" || op == "LOADG") {
+            expect(t, 2);
+            inst.set_rd(parse_reg(t[1]));
+        }
         else if (op == "STOREV") {
-            expect(t, 3);
+            expect(t, 2);
             inst.set_rs1(parse_reg(t[1]));
-            inst.set_imm(parse_imm(t[2]));
         }
 
         // ---- GRAPH ----
@@ -265,6 +268,7 @@ private:
             {"LOADV", {OPCODE_MEMORY, SUBOP_LOADV}},
             {"STOREV", {OPCODE_MEMORY, SUBOP_STOREV}},
             {"LOADE", {OPCODE_MEMORY, SUBOP_LOADE}},
+            {"LOADG", {OPCODE_MEMORY, SUBOP_LOADG}},
 
             // GRAPH
             {"ITER_NEIGHBORS", {OPCODE_GRAPH, SUBOP_ITER_NEIGHBORS}},

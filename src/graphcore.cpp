@@ -1,6 +1,9 @@
 #include <assert.h>
 #include <string.h>
-#include <asmjit/asmjit.h>
+#include <algorithm>
+#include <unordered_map>
+#include <cstring>
+#include <asmjit/x86.h>
 
 #include "graphcore.h"
 
@@ -298,11 +301,6 @@ void GCVM::exec_loadv(const Instruction &inst, Context &ctx, uint32_t vertex_id)
             ctx.regs[inst.rd()] = graph.out_degree(vertex_id);
             break;
         }
-        case 4: {
-            assert(inst.rd() < R_COUNT);
-            ctx.regs[inst.rd()] = graph.size();
-            break;
-        }
         default:
             break;
     }
@@ -332,6 +330,10 @@ void GCVM::exec_loade(const Instruction &inst, Context &ctx, uint32_t vertex_id)
     }
 }
 
+void GCVM::exec_loadg(const Instruction &inst, Context &ctx, uint32_t vertex_id) {
+    assert(inst.rd() < R_COUNT);
+    ctx.regs[inst.rd()] = graph.size();
+}
 
 /*
  * Execute a GRAPH operation.
@@ -453,7 +455,7 @@ int GCVM::exec_gather_max(const Instruction &inst, Context &ctx, uint32_t vertex
     // Calculate the max of the neighbors' v_self
     double max = __DBL_MIN__;
     for(auto e = graph.incoming_row_offsets[vertex_id]; e < graph.incoming_row_offsets[vertex_id + 1]; ++e) {
-        uint32_t n = graph.col_indices[e];
+        uint32_t n = graph.incoming_col_indices[e];
         if(vertices.v_self[n] > max)
             max = vertices.v_self[n];
     }
@@ -717,7 +719,6 @@ void GCVM::lower() {
                             case 1: out.op = LOp::LOAD_N_VAL; break;
                             case 2: out.op = LOp::LOAD_IN_DEG; break;
                             case 3: out.op = LOp::LOAD_OUT_DEG; break;
-                            case 4: out.op = LOp::LOAD_GRAPH_SIZE; break;
                         }
                         break;
                     }
@@ -733,6 +734,10 @@ void GCVM::lower() {
                         out.dst = inst.rd();
                         break;
                     }
+
+                    case SUBOP_LOADG: {
+                        out.op = LOp::LOAD_GRAPH_SIZE; break;
+                    }
                 }
                 break;
             }
@@ -747,7 +752,7 @@ void GCVM::lower() {
 
                     case SUBOP_END_ITER:
                         out.op = LOp::ITER_NEXT;
-                        out.target = pc + inst.imm();
+                        out.target = pc + inst.imm() + 1;
                         break;
 
                     case SUBOP_GATHER_SUM:
@@ -959,31 +964,19 @@ extern "C" void gcvm_vote_change(GCVM *vm) {
     vm->updates.fetch_add(1, std::memory_order_relaxed);
 }
 
-/*
- * Load/Store a VM register.
- * Arguments:
- *     const x86::Gp& ctx - Pointer to context object.
- *     int reg_index - Index of register to load/store
- * Returns:
- *     x86::Mem - Pointer to the register.
- */
-static x86::Mem reg_mem(const x86::Gp& ctx, int reg_index) {
-    return x86::ptr(ctx, offsetof(Context, regs) + reg_index * sizeof(double));
-}
-
-/*
- * Load an immediate value into a register.
- * Arguments:
- *     x86::Assembler& a - Assembler to run commands on.
- *     x86::Vec dst - Destination computer register.
- *     double val - Value to load.
- */
-static void load_imm(x86::Assembler& a, x86::Vec dst, double val) {
+/* 
+ * Load an immediate value into a register. 
+ * Arguments: 
+ *     x86::Assembler& a - Assembler to run commands on. 
+ *     x86::Vec dst - Destination computer register. 
+ *     double val - Value to load. 
+ */ 
+static void load_imm(x86::Compiler& cc, x86::Vec dst, double val) { 
     uint64_t bits;
-    mempcpy(&bits, &val, sizeof(bits));
+    std::memcpy(&bits, &val, sizeof(bits));
 
-    a.mov(x86::rax, bits);
-    a.movq(dst, x86::rax);
+    cc.movabs(x86::rax, bits);
+    cc.movq(dst, x86::rax);
 }
 
 /*
@@ -992,325 +985,389 @@ static void load_imm(x86::Assembler& a, x86::Vec dst, double val) {
  *     JITFunc - JIT compiled kernel.
  */
 JITFunc GCVM::jit_compile() {
-    // Lower the program if it hasn't been done yet
-    if(lir.size() == 0) lower();
-    if(lir.size() == 0) return;
-
-    /* Set up */
-    JitRuntime rt;
+    // Initialization
     CodeHolder code;
-    code.init(rt.environment());
+    code.init(rt.environment(), rt.cpu_features());
+    x86::Compiler cc(&code);
 
-    x86::Assembler a(&code);
+    auto fn_ptr = cc.add_func(FuncSignature::build<void, Context *, uint32_t, GCVM *>());
 
-    /* rdi = Context * */
-    /* rsi = vertex_id */
-    /* rdx = GCVM * */
-    x86::Gp ctx = x86::rdi;
-    x86::Gp vid = x86::rsi;
-    x86::Gp vm = x86::rdx;
+    // Create virtual registers for the arguments of the function
+    x86::Gp ctx = cc.new_gp_ptr("ctx");
+    x86::Gp vid = cc.new_gp32("vid");
+    x86::Gp vm = cc.new_gp_ptr("gcvm");
 
-    /* Set up labels */
-    std::vector<Label> labels;
-    for(size_t i = 0; i < lir.size(); i++) {
-        labels.push_back(a.new_label());
-    }
+    /* Labels */
+    std::vector<Label> labels(lir.size());
+    for(auto &l : labels) l = cc.new_label();
+    Label exit = cc.new_label();
 
-    // Jump to first line of asm
-    a.jmp(labels[0]);
+    /* Register file. */
+    struct VMRegisterFile {
+        std::vector<x86::Vec> regs;
 
-    /* Emit instructions */
+        VMRegisterFile(x86::Compiler &cc, size_t count) {
+            regs.reserve(count);
+
+            for(size_t i = 0; i < count; i++) {
+                // Scalar float/double container in XMM register
+                regs.push_back(cc.new_xmm());
+            }
+        }
+
+        inline x86::Vec &get(uint32_t idx) {
+            return regs[idx];
+        }
+
+        inline const x86::Vec &get(uint32_t idx) const {
+            return regs[idx];
+        }
+    };
+
+    VMRegisterFile vregs(cc, R_COUNT);
+    
+    // Set the arguments of the function to those passed in from the runtime
+    fn_ptr->set_arg(0, ctx);
+    fn_ptr->set_arg(1, vid);
+    fn_ptr->set_arg(2, vm);
+
     for(size_t pc = 0; pc < lir.size(); pc++) {
-        a.bind(labels[pc]);
+        cc.bind(labels[pc]);
         const auto &inst = lir[pc];
 
-        switch(inst.op) {
+        switch (inst.op) {
             case LOp::ADD: {
-                // Map context registers to computer registers
-                a.movsd(x86::xmm0, reg_mem(ctx, inst.src1));
-                a.movsd(x86::xmm1, reg_mem(ctx, inst.src2));
+                auto &r1 = vregs.get(inst.src1);
+                auto &r2 = vregs.get(inst.src2);
+                auto &rd = vregs.get(inst.dst);
 
-                // Instruction
-                a.addsd(x86::xmm0, x86::xmm1);
-
-                // Write back to context destination
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+                cc.movsd(rd, r1);
+                cc.addsd(rd, r2);
                 break;
             }
             case LOp::SUB: {
-                // Map context registers to computer registers
-                a.movsd(x86::xmm0, reg_mem(ctx, inst.src1));
-                a.movsd(x86::xmm1, reg_mem(ctx, inst.src2));
+                auto &r1 = vregs.get(inst.src1);
+                auto &r2 = vregs.get(inst.src2);
+                auto &rd = vregs.get(inst.dst);
 
-                // Instruction
-                a.subsd(x86::xmm0, x86::xmm1);
-
-                // Write back to context destination
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+                cc.movsd(rd, r1);
+                cc.subsd(rd, r2);
                 break;
             }
             case LOp::MUL: {
-                // Map context registers to computer registers
-                a.movsd(x86::xmm0, reg_mem(ctx, inst.src1));
-                a.movsd(x86::xmm1, reg_mem(ctx, inst.src2));
+                auto &r1 = vregs.get(inst.src1);
+                auto &r2 = vregs.get(inst.src2);
+                auto &rd = vregs.get(inst.dst);
 
-                // Instruction
-                a.mulsd(x86::xmm0, x86::xmm1);
-
-                // Write back to context destination
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+                cc.movsd(rd, r1);
+                cc.mulsd(rd, r2);
                 break;
             }
             case LOp::DIV: {
-                // Map context registers to computer registers
-                a.movsd(x86::xmm0, reg_mem(ctx, inst.src1));
-                a.movsd(x86::xmm1, reg_mem(ctx, inst.src2));
+                auto &r1 = vregs.get(inst.src1);
+                auto &r2 = vregs.get(inst.src2);
+                auto &rd = vregs.get(inst.dst);
 
-                // Instruction
-                a.divsd(x86::xmm0, x86::xmm1);
-
-                // Write back to context destination
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+                cc.movsd(rd, r1);
+                cc.divsd(rd, r2);
                 break;
             }
-            case LOp::LOADI: {
-                // Load immediate into computer register and move to context destination
-                load_imm(a, x86::xmm0, inst.imm);
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+            case LOp::MIN: {
+                auto &r1 = vregs.get(inst.src1);
+                auto &r2 = vregs.get(inst.src2);
+                auto &rd = vregs.get(inst.dst);
+
+                cc.movsd(rd, r1);
+                cc.minsd(rd, r2);
+                break;
+            }
+            case LOp::MAX: {
+                auto &r1 = vregs.get(inst.src1);
+                auto &r2 = vregs.get(inst.src2);
+                auto &rd = vregs.get(inst.dst);
+
+                cc.movsd(rd, r1);
+                cc.maxsd(rd, r2);
+                break;                
+            }
+            case LOp::ABS: {
+                auto &r1 = vregs.get(inst.src1);
+                auto &rd = vregs.get(inst.dst);
+
+                // Clear sign bit via AND with 0x7FFFFFFFFFFFFFFFULL
+                uint64_t mask = 0x7FFFFFFFFFFFFFFFULL; 
+                cc.mov(x86::rax, mask);
+                cc.movq(x86::xmm0, x86::rax);
+                cc.movsd(rd, r1);
+                cc.andpd(rd, x86::xmm0);
                 break;
             }
             case LOp::MOV: {
-                // Move context register into computer register then write back to context destination
-                a.movsd(x86::xmm0, reg_mem(ctx, inst.src1));
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+                auto &r1 = vregs.get(inst.src1);
+                auto &rd = vregs.get(inst.dst);
+
+                cc.movsd(rd, r1);
+                break;
+            }
+            case LOp::LOADI: {
+                auto &rd = vregs.get(inst.dst);
+
+                load_imm(cc, rd, inst.imm);
+                break;
+            }
+            case LOp::CMPLT: {
+                auto &r1 = vregs.get(inst.src1);
+                auto &r2 = vregs.get(inst.src2);
+                auto &rd = vregs.get(inst.dst);
+
+                Label is_true = cc.new_label();
+                Label done = cc.new_label();
+                cc.ucomisd(r1, r2);
+                cc.jb(is_true);
+                load_imm(cc, rd, 0.0);
+                cc.jmp(done);
+                cc.bind(is_true);
+                load_imm(cc, rd, 1.0);
+                cc.bind(done);
+                break;
+            }
+            case LOp::CMPLTE: {
+                auto &r1 = vregs.get(inst.src1);
+                auto &r2 = vregs.get(inst.src2);
+                auto &rd = vregs.get(inst.dst);
+
+                Label is_true = cc.new_label();
+                Label done = cc.new_label();
+                cc.ucomisd(r1, r2);
+                cc.jp(is_true);
+                load_imm(cc, rd, 0.0);
+                cc.jmp(done);
+                cc.bind(is_true);
+                load_imm(cc, rd, 1.0);
+                cc.bind(done);
+                break;
+            }
+            case LOp::CMPEQ: {
+                auto &r1 = vregs.get(inst.src1);
+                auto &r2 = vregs.get(inst.src2);
+                auto &rd = vregs.get(inst.dst);
+
+                Label is_true = cc.new_label();
+                Label done = cc.new_label();
+                cc.ucomisd(r1, r2);
+                cc.je(is_true);
+                load_imm(cc, rd, 0.0);
+                cc.jmp(done);
+                cc.bind(is_true);
+                load_imm(cc, rd, 1.0);
+                cc.bind(done);
+                break;
+            }
+            case LOp::CMPNEQ: {
+                auto &r1 = vregs.get(inst.src1);
+                auto &r2 = vregs.get(inst.src2);
+                auto &rd = vregs.get(inst.dst);
+
+                Label is_true = cc.new_label();
+                Label done = cc.new_label();
+                cc.ucomisd(r1, r2);
+                cc.jne(is_true);
+                load_imm(cc, rd, 0.0);
+                cc.jmp(done);
+                cc.bind(is_true);
+                load_imm(cc, rd, 1.0);
+                cc.bind(done);
                 break;
             }
             case LOp::JMP: {
-                a.jmp(labels[inst.target]);
+                cc.jmp(labels[inst.target]);
                 break;
             }
             case LOp::JZ: {
-                // Move context register to computer register
-                a.movsd(x86::xmm0, reg_mem(ctx, inst.src1));
-                a.xorpd(x86::xmm1, x86::xmm1); // Set xmm1 = 0
+                auto &r1 = vregs.get(inst.src1);
 
-                // Check if xmm0 == xmm1 (0)
-                a.ucomisd(x86::xmm0, x86::xmm1);
-                a.je(labels[inst.target]);
-
-                a.jmp(labels[pc + 1]);
+                cc.xorpd(x86::xmm0, x86::xmm0);
+                cc.ucomisd(r1, x86::xmm0);
+                cc.je(labels[inst.target]);
                 break;
             }
             case LOp::JNZ: {
-                // Move context register to computer register
-                a.movsd(x86::xmm0, reg_mem(ctx, inst.src1));
-                a.xorpd(x86::xmm1, x86::xmm1);  // Set xmm1 = 0
+                auto &r1 = vregs.get(inst.src1);
 
-                // Check if xmm0 != xmm1 (0)
-                a.ucomisd(x86::xmm0, x86::xmm1);
-                a.jne(labels[inst.target]);
-
-                a.jmp(labels[pc + 1]);
+                cc.xorpd(x86::xmm0, x86::xmm0);
+                cc.ucomisd(r1, x86::xmm0);
+                cc.jne(labels[inst.target]);
+                break;
                 break;
             }
             case LOp::LOAD_V_SELF: {
-                // Load the value stored at ctx->v_self
-                a.movsd(x86::xmm0, x86::ptr(ctx, offsetof(Context, v_self)));
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+                auto &rd = vregs.get(inst.dst);
+
+                cc.movsd(rd, x86::ptr(ctx, offsetof(Context, v_self)));
                 break;
             }
             case LOp::LOAD_N_VAL: {
-                // Load the value stored at ctx->n_val
-                a.movsd(x86::xmm0, x86::ptr(ctx, offsetof(Context, n_val)));
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+                auto &rd = vregs.get(inst.dst);
+
+                cc.movsd(rd, x86::ptr(ctx, offsetof(Context, n_val)));
                 break;
             }
             case LOp::LOAD_IN_DEG: {
-                // Load the value stored at ctx->in_deg
-                a.movsd(x86::xmm0, x86::ptr(ctx, offsetof(Context, in_deg)));
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+                auto &rd = vregs.get(inst.dst);
+
+                cc.movsd(rd, x86::ptr(ctx, offsetof(Context, in_deg)));
                 break;
             }
             case LOp::LOAD_OUT_DEG: {
-                // Load the value stored at ctx->out_deg
-                a.movsd(x86::xmm0, x86::ptr(ctx, offsetof(Context, out_deg)));
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+                auto &rd = vregs.get(inst.dst);
+
+                cc.movsd(rd, x86::ptr(ctx, offsetof(Context, out_deg)));
                 break;
             }
             case LOp::LOAD_GRAPH_SIZE: {
-                // Load the value stored at ctx->g_size
-                a.movsd(x86::xmm0, x86::ptr(ctx, offsetof(Context, g_size)));
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+                auto &rd = vregs.get(inst.dst);
+
+                cc.movsd(rd, x86::ptr(ctx, offsetof(Context, g_size)));
                 break;
             }
             case LOp::STORE_V_OUT: {
-                // Store context register value in the memory location ctx->v_out
-                a.movsd(x86::xmm0, reg_mem(ctx, inst.src1));
-                a.movsd(x86::ptr(ctx, offsetof(Context, v_out)), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+                auto &r1 = vregs.get(inst.src1);
+
+                cc.movsd(x86::ptr(ctx, offsetof(Context, v_out)), r1);
                 break;
             }
             case LOp::LOAD_E_ATTR: {
-                // Load the value stored at ctx->e_attr
-                a.movsd(x86::xmm0, x86::ptr(ctx, offsetof(Context, e_attr)));
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-                a.jmp(labels[pc + 1]);
+                auto &rd = vregs.get(inst.dst);
+
+                cc.movsd(rd, x86::ptr(ctx, offsetof(Context, e_attr)));
                 break;
+            }
+            case LOp::GATHER_SUM: {
+                auto &rd = vregs.get(inst.dst);
+
+                cc.mov(x86::rdi, vm);
+                cc.mov(x86::rsi, vid);
+
+                cc.call(imm((void *)gcvm_gather_sum));
+
+                cc.movsd(rd, x86::xmm0);
+                break;
+            }
+            case LOp::GATHER_MIN: {
+                auto &rd = vregs.get(inst.dst);
+
+                cc.mov(x86::rdi, vm);
+                cc.mov(x86::rsi, vid);
+
+                cc.call(imm((void *)gcvm_gather_min));
+
+                cc.movsd(rd, x86::xmm0);
+                break;
+            }
+            case LOp::GATHER_MAX: {
+                auto &rd = vregs.get(inst.dst);
+
+                cc.mov(x86::rdi, vm);
+                cc.mov(x86::rsi, vid);
+
+                cc.call(imm((void *)gcvm_gather_max));
+
+                cc.movsd(rd, x86::xmm0);
+                break;
+            }
+            case LOp::GATHER_COUNT: {
+                auto &rd = vregs.get(inst.dst);
+
+                cc.mov(x86::rdi, vm);
+                cc.mov(x86::rsi, vid);
+
+                cc.call(imm((void *)gcvm_gather_count));
+
+                cc.movsd(rd, x86::xmm0);
+                break;
+            }
+            case LOp::SCATTER: {
+                cc.mov(x86::rdi, vm);
+                cc.mov(x86::rsi, vid);
+
+                cc.call(imm((void *)gcvm_scatter));
+
+                break;
+            }
+            case LOp::SCATTER_IF: {
+                auto &r1 = vregs.get(inst.src1);
+
+                cc.xorpd(x86::xmm0, x86::xmm0);
+
+                cc.ucomisd(r1, x86::xmm0);
+                cc.je(labels[pc + 1]);
+
+                cc.mov(x86::rdi, vm);
+                cc.mov(x86::rsi, vid);
+
+                cc.call(imm((void *)gcvm_scatter));
             }
             case LOp::ITER_BEGIN: {
                 // Set up arguments
-                a.mov(x86::rdi, vm);
-                a.mov(x86::rsi, ctx);
-                a.mov(x86::rdx, vid);
+                cc.mov(x86::rdi, vm);
+                cc.mov(x86::rsi, ctx);
+                cc.mov(x86::rdx, vid);
 
                 // Call VM implementation
-                a.call(imm((void *)gcvm_iter_begin));
+                cc.call(imm((void *)gcvm_iter_begin));
 
                 // Return in al -> test.
-                a.test(x86::al, x86::al);
+                cc.test(x86::al, x86::al);
 
                 // If false, jump to skip target
-                a.jz(labels[inst.target]);
-
-                // Else continue
-                a.jmp(labels[pc + 1]);
+                cc.jz(labels[inst.target]);
                 break;
             }
             case LOp::ITER_NEXT: {
                 // Set up arguments
-                a.mov(x86::rdi, vm);
-                a.mov(x86::rsi, ctx);
-                a.mov(x86::rdx, vid);
+                cc.mov(x86::rdi, vm);
+                cc.mov(x86::rsi, ctx);
+                cc.mov(x86::rdx, vid);
 
                 // Call VM implementation
-                a.call(imm((void *)gcvm_iter_next));
+                cc.call(imm((void *)gcvm_iter_begin));
 
                 // Return in al -> test.
-                a.test(x86::al, x86::al);
+                cc.test(x86::al, x86::al);
 
                 // If false, jump to skip target
-                a.jnz(labels[inst.target]);
-
-                // Else continue
-                a.jmp(labels[pc + 1]);
-                break;
-            }
-            case LOp::GATHER_SUM: {
-                // Set up arguments
-                a.mov(x86::rdi, vm);
-                a.mov(x86::rsi, vid);
-
-                // Call VM implementation
-                a.call(imm((void *)gcvm_gather_sum));
-
-                // Return in xmm0
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-
-                a.jmp(labels[pc + 1]);
-                break;
-            }
-            case LOp::GATHER_MIN: {
-                // Set up arguments
-                a.mov(x86::rdi, vm);
-                a.mov(x86::rsi, vid);
-
-                // Call VM implementation
-                a.call(imm((void *)gcvm_gather_min));
-
-                // Return in xmm0
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-
-                a.jmp(labels[pc + 1]);
-                break;
-            }
-            case LOp::GATHER_MAX: {
-                // Set up arguments
-                a.mov(x86::rdi, vm);
-                a.mov(x86::rsi, vid);
-
-                // Call VM implementation
-                a.call(imm((void *)gcvm_gather_max));
-
-                // Return in xmm0
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-
-                a.jmp(labels[pc + 1]);
-                break;
-            }
-            case LOp::GATHER_COUNT: {
-                // Set up arguments
-                a.mov(x86::rdi, vm);
-                a.mov(x86::rsi, vid);
-
-                // Call VM implementation
-                a.call(imm((void *)gcvm_gather_count));
-
-                // Return in xmm0
-                a.movsd(reg_mem(ctx, inst.dst), x86::xmm0);
-
-                a.jmp(labels[pc + 1]);
-                break;
-            }
-            case LOp::SCATTER: {
-                // Set up arguments
-                a.mov(x86::rdi, vm);
-                a.mov(x86::rsi, vid);
-
-                // Call VM implementation
-                a.call(imm((void *)gcvm_scatter));
-
-                a.jmp(labels[pc + 1]);
-                break;
-            }
-            case LOp::SCATTER_IF: {
-                // Check condition first
-                a.movsd(x86::xmm0, reg_mem(ctx, inst.src1));
-                a.xorpd(x86::xmm1, x86::xmm1); // 0
-
-                // Check if xmm0 == xmm1 (0)
-                a.ucomisd(x86::xmm0, x86::xmm1);
-                a.je(labels[pc + 1]); // Skip if 0
-
-                // Set up arguments
-                a.mov(x86::rdi, vm);
-                a.mov(x86::rsi, vid);
-
-                // Call VM implementation
-                a.call(imm((void *)gcvm_scatter));
-
-                a.jmp(labels[pc + 1]);
+                cc.jz(labels[inst.target]);
                 break;
             }
             case LOp::VOTE_CHANGE: {
-                // Set up arguments
-                a.mov(x86::rdi, vm);
+                cc.mov(x86::rdi, vm);
 
-                // Call VM implementation
-                a.call(imm((void *)gcvm_vote_change));
-
-                a.jmp(labels[pc + 1]);
+                cc.call(imm((void *)gcvm_vote_change));
                 break;
             }
             case LOp::RETURN: {
-                a.ret();
+                cc.jmp(exit);
                 break;
+            }
+            default: {
+                throw std::runtime_error("Invalid operation");
             }
         }
     }
 
+    cc.bind(exit);
+    cc.ret();
+
+    cc.end_func();
+    cc.finalize();
+
     JITFunc fn;
-    rt.add(&fn, &code);
+    Error err = rt.add(&fn, &code);
+    if(err != Error::kOk) {
+        throw std::runtime_error("Could not create function");
+        return nullptr;
+    }
+
     return fn;
 }
 

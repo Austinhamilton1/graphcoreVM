@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <atomic>
+#include <asmjit/x86.h>
 
 #include "graph.h"
 #include "program.h"
@@ -36,9 +37,9 @@ struct Context {
     double v_out;       // Write-only next value of node
 
     double n_val;       // Iterator (next neighbor node ID)
-    size_t in_deg;      // Node in-degree
-    size_t out_deg;     // Node out-degree
-    size_t g_size;      // Graph size
+    double in_deg;      // Node in-degree
+    double out_deg;     // Node out-degree
+    double g_size;      // Graph size
     double e_attr;      // Iterator (next edge attribute)
 
     uint32_t iter_edge; // Current edge index
@@ -47,6 +48,16 @@ struct Context {
 
 class GCVM;
 using JITFunc = void(*)(Context *, uint32_t, GCVM *);
+
+/* Allow JIT functions access to GCVM internals. */
+extern "C" bool gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex);
+extern "C" bool gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex);
+extern "C" double gcvm_gather_sum(GCVM *vm, uint32_t vertex);
+extern "C" double gcvm_gather_min(GCVM *vm, uint32_t vertex);
+extern "C" double gcvm_gather_max(GCVM *vm, uint32_t vertex);
+extern "C" double gcvm_gather_count(GCVM *vm, uint32_t vertex);
+extern "C" void gcvm_scatter(GCVM *vm, uint32_t vertex);
+extern "C" void gcvm_vote_change(GCVM *vm);
 
 /* 
  * Graph Runtime. This class manages the runtime.
@@ -59,7 +70,8 @@ private:
     VertexState vertices;           // SoA of vertex states
     std::atomic<size_t> updates;    // Number of vertices affected by kernel
     std::vector<LInstruction> lir;  // Lowered IR representation for JIT compilation
-    JITFunc jit_compiled;
+    JITFunc jit_compiled;           // Compiled JIT kernel 
+    asmjit::JitRuntime rt;          // Save runtime to ensure lifetime
 
     /* Allow JIT functions access to GCVM internals. */
     friend bool gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex);
@@ -125,6 +137,7 @@ private:
     void exec_loadv(const Instruction &inst, Context &ctx, uint32_t vertex_id);
     void exec_storev(const Instruction &inst, Context &ctx, uint32_t vertex_id);
     void exec_loade(const Instruction &inst, Context &ctx, uint32_t vertex_id);
+    void exec_loadg(const Instruction &inst, Context &ctx, uint32_t vertex_id);
 
     /*
      * Execute a GRAPH operation.
@@ -247,6 +260,11 @@ public:
      * Pass over the bytecode and convert it to lowered IR.
      */
     void lower();
+
+    /*
+     * Prepare internal program for JIT compiled kernel.
+     */
+    void compile_prepare();
 
     /*
      * Print the lowered IR of the program.

@@ -4,6 +4,7 @@
 #include <fstream>
 #include <unistd.h>
 #include <getopt.h>
+#include <chrono>
 
 #include "program.h"
 #include "graph.h"
@@ -77,7 +78,10 @@ int main(int argc, char **argv) {
     runtime.set_seed_vertices(true);
     runtime.load_program(program);
 
-    runtime.run(false);
+    auto start = std::chrono::high_resolution_clock::now();
+    runtime.run(true);
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
     auto results = runtime.get_results();
 
@@ -97,6 +101,8 @@ int main(int argc, char **argv) {
         }
         file << "========================\n";
     }
+
+    std::cout << "Execution time: " << duration.count() << " microseconds\n";
 
     return 0;
 }
