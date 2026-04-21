@@ -232,10 +232,6 @@ private:
 
     void expect(const std::vector<std::string>& t, size_t n) {
         if (t.size() != n) {
-            for(size_t i = 0; i < t.size(); i++) {
-                std::cout << t[i] << " ";
-            }
-            std::cout << std::endl;
             throw std::runtime_error("Invalid operand count for: " + t[0]);
         }
     }

@@ -22,7 +22,7 @@ start:
             LOADV r2, 1 ; node_attr[1] = neighbor.v_self
 
             ; r3 = edge attr (1 / out degree)
-            LOADE r3
+            LOADE r3n
             JZ r3, skip
 
             ; r2 = r2 * r3

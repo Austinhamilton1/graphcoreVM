@@ -11,8 +11,8 @@
 #include "graphcore.h"
 
 int main(int argc, char **argv) {
-    if(argc != 7 && argc != 9) {
-        std::cerr << "Program usage: " << argv[0] << " -b [bytecode file] -g [graph file] -s [seed value] -o [output file]\n";
+    if(argc < 7 || argc > 10) {
+        std::cerr << "Program usage: " << argv[0] << " -b [bytecode file] -g [graph file] -s [seed value] -o [output file] -j\n";
         return -1;
     }
 
@@ -20,6 +20,7 @@ int main(int argc, char **argv) {
     std::string graph_file;
     std::string output_file;
     double seed_value = 0.0;
+    bool compile = false;
 
     // Parse arguments
     for(int i = 1; i < argc; i++) {
@@ -53,6 +54,8 @@ int main(int argc, char **argv) {
                 std::cerr << "Error: -o requires an argument\n";
                 return -1;
             }
+        } else if(arg == "-j") {
+            compile = true;
         }
     }
 
@@ -79,7 +82,7 @@ int main(int argc, char **argv) {
     runtime.load_program(program);
 
     auto start = std::chrono::high_resolution_clock::now();
-    runtime.run(true);
+    runtime.run(compile);
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 

@@ -27,9 +27,9 @@
 #define SUBOP_MOV               0x07
 #define SUBOP_LOADI             0x08
 #define SUBOP_CMPLT             0x09
-#define SUBOP_CMPLTE            0x10
-#define SUBOP_CMPEQ             0x11
-#define SUBOP_CMPNEQ            0x12
+#define SUBOP_CMPLTE            0x0A
+#define SUBOP_CMPEQ             0x0B
+#define SUBOP_CMPNEQ            0x0C
 
 #define SUBOP_LOADV             0x00
 #define SUBOP_STOREV            0x01

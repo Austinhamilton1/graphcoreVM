@@ -665,19 +665,19 @@ void GCVM::lower() {
 
                     case SUBOP_JMP:
                         out.op = LOp::JMP;
-                        out.target = pc + inst.imm();
+                        out.target = pc + inst.imm() + 1;
                         break;
 
                     case SUBOP_JZ:
                         out.op = LOp::JZ;
                         out.src1 = inst.rs1();
-                        out.target = pc + inst.imm();
+                        out.target = pc + inst.imm() + 1;
                         break;
 
                     case SUBOP_JNZ:
                         out.op = LOp::JNZ;
                         out.src1 = inst.rs1();
-                        out.target = pc + inst.imm();
+                        out.target = pc + inst.imm() + 1;
                         break;
                 }
                 break;
@@ -740,7 +740,9 @@ void GCVM::lower() {
                     }
 
                     case SUBOP_LOADG: {
-                        out.op = LOp::LOAD_GRAPH_SIZE; break;
+                        out.op = LOp::LOAD_GRAPH_SIZE; 
+                        out.dst = inst.rd();
+                        break;
                     }
                 }
                 break;
@@ -813,12 +815,13 @@ void GCVM::lower() {
  */
 void GCVM::dump_lir() {
     for(int i = 0; i < lir.size(); i++) {
-        printf("%d: op=%d dst=%d src1=%d src2=%d target=%d\n",
+        printf("%d: op=%s dst=%d src1=%d src2=%d, imm=%f, target=%d\n",
             i,
-            (int)lir[i].op,
+            lir[i].to_string().c_str(),
             lir[i].dst,
             lir[i].src1,
             lir[i].src2,
+            lir[i].imm,
             lir[i].target
         );
     }
@@ -989,6 +992,11 @@ static void load_imm(x86::Compiler& cc, x86::Vec dst, double val) {
  *     JITFunc - JIT compiled kernel.
  */
 JITFunc GCVM::jit_compile() {
+    if(lir.size() == 0)
+        lower();
+    if(lir.size() == 0)
+        return nullptr;
+
     // Initialization
     CodeHolder code;
     code.init(rt.environment(), rt.cpu_features());
@@ -1020,10 +1028,14 @@ JITFunc GCVM::jit_compile() {
         }
 
         inline x86::Vec &get(uint32_t idx) {
+            if(idx >= R_COUNT)
+                throw std::runtime_error("Invalid register: " + idx);
             return regs[idx];
         }
 
         inline const x86::Vec &get(uint32_t idx) const {
+            if(idx >= R_COUNT)
+                throw std::runtime_error("Invalid register: " + idx);
             return regs[idx];
         }
     };
@@ -1041,93 +1053,133 @@ JITFunc GCVM::jit_compile() {
 
         switch (inst.op) {
             case LOp::ADD: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
                 auto &r2 = vregs.get(inst.src2);
                 auto &rd = vregs.get(inst.dst);
 
-                cc.movsd(rd, r1);
-                cc.addsd(rd, r2);
+                // Add to a temporary register to resolve potential collisions
+                auto tmp = cc.new_xmm();
+                cc.movsd(tmp, r1);
+                cc.addsd(tmp, r2);
+                cc.movsd(rd, tmp);
                 break;
             }
             case LOp::SUB: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
                 auto &r2 = vregs.get(inst.src2);
                 auto &rd = vregs.get(inst.dst);
 
-                cc.movsd(rd, r1);
-                cc.subsd(rd, r2);
+                // Subtract from a temporary register to resolve potential collisions
+                auto tmp = cc.new_xmm();
+                cc.movsd(tmp, r1);
+                cc.subsd(tmp, r2);
+                cc.movsd(rd, tmp);
                 break;
             }
             case LOp::MUL: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
                 auto &r2 = vregs.get(inst.src2);
                 auto &rd = vregs.get(inst.dst);
 
-                cc.movsd(rd, r1);
-                cc.mulsd(rd, r2);
+                // Multiply to a temporary register to resolve potential collisions
+                auto tmp = cc.new_xmm();
+                cc.movsd(tmp, r1);
+                cc.mulsd(tmp, r2);
+                cc.movsd(rd, tmp);
                 break;
             }
             case LOp::DIV: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
                 auto &r2 = vregs.get(inst.src2);
                 auto &rd = vregs.get(inst.dst);
 
-                cc.movsd(rd, r1);
-                cc.divsd(rd, r2);
+                // Divide from a temporary register to resolve potential collisions
+                auto tmp = cc.new_xmm();
+                cc.movsd(tmp, r1);
+                cc.divsd(tmp, r2);
+                cc.movsd(rd, tmp);
                 break;
             }
             case LOp::MIN: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
                 auto &r2 = vregs.get(inst.src2);
                 auto &rd = vregs.get(inst.dst);
 
-                cc.movsd(rd, r1);
-                cc.minsd(rd, r2);
+                // Min with a temporary register to resolve potential collisions
+                auto tmp = cc.new_xmm();
+                cc.movsd(tmp, r1);
+                cc.minsd(tmp, r2);
+                cc.movsd(rd, tmp);
                 break;
             }
             case LOp::MAX: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
                 auto &r2 = vregs.get(inst.src2);
                 auto &rd = vregs.get(inst.dst);
 
-                cc.movsd(rd, r1);
-                cc.maxsd(rd, r2);
+                // Max with a temporary register to resolve potential collisions
+                auto tmp = cc.new_xmm();
+                cc.movsd(tmp, r1);
+                cc.maxsd(tmp, r2);
+                cc.movsd(rd, tmp);
                 break;                
             }
             case LOp::ABS: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
                 auto &rd = vregs.get(inst.dst);
+
+                // Temporary register to hold the mask
+                auto tmp = cc.new_xmm();
+                auto val = cc.new_xmm();    // Computation tmp
 
                 // Clear sign bit via AND with 0x7FFFFFFFFFFFFFFFULL
                 uint64_t mask = 0x7FFFFFFFFFFFFFFFULL; 
                 cc.mov(x86::rax, mask);
-                cc.movq(x86::xmm0, x86::rax);
-                cc.movsd(rd, r1);
-                cc.andpd(rd, x86::xmm0);
+                cc.movq(tmp, x86::rax);
+
+                // Calculate ABS with correct register aliasing
+                cc.movsd(val, r1);
+                cc.andpd(val, tmp);
+                cc.movsd(rd, val);
                 break;
             }
             case LOp::MOV: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
                 auto &rd = vregs.get(inst.dst);
 
+                // Move registers
                 cc.movsd(rd, r1);
                 break;
             }
             case LOp::LOADI: {
+                // Load virtual registers
                 auto &rd = vregs.get(inst.dst);
 
+                // Load immediate values
                 load_imm(cc, rd, inst.imm);
                 break;
             }
             case LOp::CMPLT: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
                 auto &r2 = vregs.get(inst.src2);
                 auto &rd = vregs.get(inst.dst);
 
+                // CMPLT
                 Label is_true = cc.new_label();
                 Label done = cc.new_label();
                 cc.ucomisd(r1, r2);
-                cc.jb(is_true);
+                cc.setb(x86::al);
+                cc.test(x86::al, x86::al);
+                cc.jnz(is_true);
                 load_imm(cc, rd, 0.0);
                 cc.jmp(done);
                 cc.bind(is_true);
@@ -1136,14 +1188,18 @@ JITFunc GCVM::jit_compile() {
                 break;
             }
             case LOp::CMPLTE: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
                 auto &r2 = vregs.get(inst.src2);
                 auto &rd = vregs.get(inst.dst);
 
+                // CMPLTE
                 Label is_true = cc.new_label();
                 Label done = cc.new_label();
                 cc.ucomisd(r1, r2);
-                cc.jbe(is_true);
+                cc.setbe(x86::al);
+                cc.test(x86::al, x86::al);
+                cc.jnz(is_true);
                 load_imm(cc, rd, 0.0);
                 cc.jmp(done);
                 cc.bind(is_true);
@@ -1152,14 +1208,18 @@ JITFunc GCVM::jit_compile() {
                 break;
             }
             case LOp::CMPEQ: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
                 auto &r2 = vregs.get(inst.src2);
                 auto &rd = vregs.get(inst.dst);
 
+                // CMPEQ
                 Label is_true = cc.new_label();
                 Label done = cc.new_label();
                 cc.ucomisd(r1, r2);
-                cc.je(is_true);
+                cc.sete(x86::al);
+                cc.test(x86::al, x86::al);
+                cc.jnz(is_true);
                 load_imm(cc, rd, 0.0);
                 cc.jmp(done);
                 cc.bind(is_true);
@@ -1168,14 +1228,18 @@ JITFunc GCVM::jit_compile() {
                 break;
             }
             case LOp::CMPNEQ: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
                 auto &r2 = vregs.get(inst.src2);
                 auto &rd = vregs.get(inst.dst);
 
+                // CMPNEQ
                 Label is_true = cc.new_label();
                 Label done = cc.new_label();
                 cc.ucomisd(r1, r2);
-                cc.jne(is_true);
+                cc.setne(x86::al);
+                cc.test(x86::al, x86::al);
+                cc.jnz(is_true);
                 load_imm(cc, rd, 0.0);
                 cc.jmp(done);
                 cc.bind(is_true);
@@ -1184,72 +1248,98 @@ JITFunc GCVM::jit_compile() {
                 break;
             }
             case LOp::JMP: {
+                // Unconditional jump
                 cc.jmp(labels[inst.target]);
                 break;
             }
             case LOp::JZ: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
+                auto tmp = cc.new_xmm();    // Fixes name aliasing
 
-                cc.xorpd(x86::xmm0, x86::xmm0);
-                cc.ucomisd(r1, x86::xmm0);
-                cc.je(labels[inst.target]);
+                // Conditional jump
+                cc.xorpd(tmp, tmp);
+                cc.ucomisd(r1, tmp);
+                cc.sete(x86::al);
+                cc.test(x86::al, x86::al);
+                cc.jnz(labels[inst.target]);
                 break;
             }
             case LOp::JNZ: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
+                auto xmm = cc.new_xmm();    // Fixes name aliasing
 
-                cc.xorpd(x86::xmm0, x86::xmm0);
-                cc.ucomisd(r1, x86::xmm0);
-                cc.jne(labels[inst.target]);
+                // Conditional jump
+                cc.xorpd(xmm, xmm);
+                cc.ucomisd(r1, xmm);
+                cc.setne(x86::al);
+                cc.test(x86::al, x86::al);
+                cc.jnz(labels[inst.target]);
                 break;
                 break;
             }
             case LOp::LOAD_V_SELF: {
+                // Load virtual registers
                 auto &rd = vregs.get(inst.dst);
 
+                // Load from memory
                 cc.movsd(rd, x86::ptr(ctx, offsetof(Context, v_self)));
                 break;
             }
             case LOp::LOAD_N_VAL: {
+                // Load virtual registers
                 auto &rd = vregs.get(inst.dst);
 
+                // Load from memory
                 cc.movsd(rd, x86::ptr(ctx, offsetof(Context, n_val)));
                 break;
             }
             case LOp::LOAD_IN_DEG: {
+                // Load virtual registers
                 auto &rd = vregs.get(inst.dst);
 
+                // Load from memory
                 cc.movsd(rd, x86::ptr(ctx, offsetof(Context, in_deg)));
                 break;
             }
             case LOp::LOAD_OUT_DEG: {
+                // Load virtual registers
                 auto &rd = vregs.get(inst.dst);
 
+                // Load from memory
                 cc.movsd(rd, x86::ptr(ctx, offsetof(Context, out_deg)));
                 break;
             }
             case LOp::LOAD_GRAPH_SIZE: {
+                // Load virtual registers
                 auto &rd = vregs.get(inst.dst);
 
+                // Load from memory
                 cc.movsd(rd, x86::ptr(ctx, offsetof(Context, g_size)));
                 break;
             }
             case LOp::STORE_V_OUT: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
 
+                // Store into memory
                 cc.movsd(x86::ptr(ctx, offsetof(Context, v_out)), r1);
-                printf("store_v_out called\n");
                 break;
             }
             case LOp::LOAD_E_ATTR: {
+                // Load virtual registers
                 auto &rd = vregs.get(inst.dst);
 
+                // Load from memory
                 cc.movsd(rd, x86::ptr(ctx, offsetof(Context, e_attr)));
                 break;
             }
             case LOp::GATHER_SUM: {
+                // Load virtual registers
                 auto &rd = vregs.get(inst.dst);
 
+                // Call out to runtime
                 InvokeNode *invoke_node;
                 cc.invoke(Out(invoke_node),
                     (uint64_t)gcvm_gather_sum,
@@ -1261,8 +1351,10 @@ JITFunc GCVM::jit_compile() {
                 break;
             }
             case LOp::GATHER_MIN: {
+                // Load virtual registers
                 auto &rd = vregs.get(inst.dst);
 
+                // Call out to runtime
                 InvokeNode *invoke_node;
                 cc.invoke(Out(invoke_node),
                     (uint64_t)gcvm_gather_min,
@@ -1274,8 +1366,10 @@ JITFunc GCVM::jit_compile() {
                 break;
             }
             case LOp::GATHER_MAX: {
+                // Load virtual registers
                 auto &rd = vregs.get(inst.dst);
 
+                // Call out to runtime
                 InvokeNode *invoke_node;
                 cc.invoke(Out(invoke_node),
                     (uint64_t)gcvm_gather_max,
@@ -1287,8 +1381,10 @@ JITFunc GCVM::jit_compile() {
                 break;
             }
             case LOp::GATHER_COUNT: {
+                // Load virtual registers
                 auto &rd = vregs.get(inst.dst);
 
+                // Call out to runtime
                 InvokeNode *invoke_node;
                 cc.invoke(Out(invoke_node),
                     (uint64_t)gcvm_gather_count,
@@ -1300,6 +1396,7 @@ JITFunc GCVM::jit_compile() {
                 break;
             }
             case LOp::SCATTER: {
+                // Call out to runtime
                 InvokeNode *invoke_node;
                 cc.invoke(Out(invoke_node),
                     (uint64_t)gcvm_scatter,
@@ -1310,13 +1407,16 @@ JITFunc GCVM::jit_compile() {
                 break;
             }
             case LOp::SCATTER_IF: {
+                // Load virtual registers
                 auto &r1 = vregs.get(inst.src1);
+                auto tmp = cc.new_xmm();    // Prevents name aliasing
 
-                cc.xorpd(x86::xmm0, x86::xmm0);
-
-                cc.ucomisd(r1, x86::xmm0);
+                // Conditional scatter
+                cc.xorpd(tmp, tmp);
+                cc.ucomisd(r1, tmp);
                 cc.je(labels[pc + 1]);
 
+                // Call out to runtime
                 InvokeNode *invoke_node;
                 cc.invoke(Out(invoke_node),
                     (uint64_t)gcvm_scatter,
@@ -1330,6 +1430,7 @@ JITFunc GCVM::jit_compile() {
                 // Return value
                 x86::Gp ret = cc.new_gp32();
 
+                // Call out to runtime
                 InvokeNode *invoke_node;
                 cc.invoke(Out(invoke_node),
                     (uint64_t)gcvm_iter_begin,
@@ -1350,6 +1451,7 @@ JITFunc GCVM::jit_compile() {
                 // Return value
                 x86::Gp ret = cc.new_gp32();
 
+                // Call out to runtime
                 InvokeNode *invoke_node;
                 cc.invoke(Out(invoke_node),
                     (uint64_t)gcvm_iter_next,
@@ -1362,11 +1464,12 @@ JITFunc GCVM::jit_compile() {
                 // Return in al -> test.
                 cc.test(ret, ret);
 
-                // If false, jump to skip target
-                cc.jz(labels[inst.target]);
+                // If not 0, jump back to loop target
+                cc.jnz(labels[inst.target]);
                 break;
             }
             case LOp::VOTE_CHANGE: {
+                // Call out to runtime
                 InvokeNode *invoke_node;
                 cc.invoke(Out(invoke_node),
                     (uint64_t)gcvm_vote_change,
@@ -1375,6 +1478,7 @@ JITFunc GCVM::jit_compile() {
                 break;
             }
             case LOp::RETURN: {
+                // Jump to exit to finalize
                 cc.jmp(exit);
                 break;
             }
@@ -1384,15 +1488,13 @@ JITFunc GCVM::jit_compile() {
         }
     }
 
+    // Return from function and end function
     cc.bind(exit);
-    for(size_t i = 0; i < R_COUNT; i++) {
-        cc.movsd(x86::ptr(ctx, i * sizeof(double)), vregs.get(i));
-    }
     cc.ret();
-
     cc.end_func();
     cc.finalize();
 
+    // Compile the function
     JITFunc fn;
     Error err = rt.add(&fn, &code);
     if(err != Error::kOk) {
@@ -1429,8 +1531,6 @@ void GCVM::run(bool compile) {
                 } else {
                     execute_vertex(ctx, v);
                 }
-
-                printf("v_out = %f\n", ctx.v_out);
 
                 // Store context
                 store_context(ctx, v);
