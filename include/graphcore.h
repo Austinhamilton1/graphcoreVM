@@ -50,8 +50,8 @@ class GCVM;
 using JITFunc = void(*)(Context *, uint32_t, GCVM *);
 
 /* Allow JIT functions access to GCVM internals. */
-extern "C" bool gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex);
-extern "C" bool gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex);
+extern "C" uint32_t gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex);
+extern "C" uint32_t gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex);
 extern "C" double gcvm_gather_sum(GCVM *vm, uint32_t vertex);
 extern "C" double gcvm_gather_min(GCVM *vm, uint32_t vertex);
 extern "C" double gcvm_gather_max(GCVM *vm, uint32_t vertex);
@@ -74,8 +74,8 @@ private:
     asmjit::JitRuntime rt;          // Save runtime to ensure lifetime
 
     /* Allow JIT functions access to GCVM internals. */
-    friend bool gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex);
-    friend bool gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex);
+    friend uint32_t gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex);
+    friend uint32_t gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex);
     friend double gcvm_gather_sum(GCVM *vm, uint32_t vertex);
     friend double gcvm_gather_min(GCVM *vm, uint32_t vertex);
     friend double gcvm_gather_max(GCVM *vm, uint32_t vertex);

@@ -275,6 +275,10 @@ void GCVM::exec_memory(const Instruction &inst, Context &ctx, uint32_t vertex_id
             exec_loade(inst, ctx, vertex_id);
             break;
         }
+        case SUBOP_LOADG: {
+            exec_loadg(inst, ctx, vertex_id);
+            break;
+        }
     }
 }
 
@@ -332,7 +336,7 @@ void GCVM::exec_loade(const Instruction &inst, Context &ctx, uint32_t vertex_id)
 
 void GCVM::exec_loadg(const Instruction &inst, Context &ctx, uint32_t vertex_id) {
     assert(inst.rd() < R_COUNT);
-    ctx.regs[inst.rd()] = graph.size();
+    ctx.regs[inst.rd()] = ctx.g_size;
 }
 
 /*
@@ -829,14 +833,14 @@ void GCVM::dump_lir() {
  * Returns:
  *     bool - true if iteration is non-empty, false otherwise.
  */
-extern "C" bool gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex) {
+extern "C" uint32_t gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex) {
     // Initialize iterators
     ctx->iter_edge = vm->graph.incoming_row_offsets[vertex];
     ctx->iter_end = vm->graph.incoming_row_offsets[vertex + 1];
 
     if(ctx->iter_edge >= ctx->iter_end) {
         // Iterator is empty
-        return false;
+        return 0;
     }
 
     // Load first neighbor
@@ -847,7 +851,7 @@ extern "C" bool gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex) {
     }
 
     // Non-empty iterator
-    return true;
+    return 1;
 }
 
 /*
@@ -859,7 +863,7 @@ extern "C" bool gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex) {
  * Returns:
  *     bool - true if iteration is non-empty, false otherwise.
  */
-extern "C" bool gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex) {
+extern "C" uint32_t gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex) {
     ctx->iter_edge++;
 
     if(ctx->iter_edge < ctx->iter_end) {
@@ -870,11 +874,11 @@ extern "C" bool gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex) {
             ctx->e_attr = vm->graph.incoming_edge_attr[e];
         }
 
-        return true; // Non-empty iterator
+        return 1; // Non-empty iterator
     }
 
     // Empty iterator
-    return false;
+    return 0;
 }
 
 /*
@@ -975,7 +979,7 @@ static void load_imm(x86::Compiler& cc, x86::Vec dst, double val) {
     uint64_t bits;
     std::memcpy(&bits, &val, sizeof(bits));
 
-    cc.movabs(x86::rax, bits);
+    cc.mov(x86::rax, bits);
     cc.movq(dst, x86::rax);
 }
 
@@ -1139,7 +1143,7 @@ JITFunc GCVM::jit_compile() {
                 Label is_true = cc.new_label();
                 Label done = cc.new_label();
                 cc.ucomisd(r1, r2);
-                cc.jp(is_true);
+                cc.jbe(is_true);
                 load_imm(cc, rd, 0.0);
                 cc.jmp(done);
                 cc.bind(is_true);
@@ -1234,6 +1238,7 @@ JITFunc GCVM::jit_compile() {
                 auto &r1 = vregs.get(inst.src1);
 
                 cc.movsd(x86::ptr(ctx, offsetof(Context, v_out)), r1);
+                printf("store_v_out called\n");
                 break;
             }
             case LOp::LOAD_E_ATTR: {
@@ -1245,52 +1250,62 @@ JITFunc GCVM::jit_compile() {
             case LOp::GATHER_SUM: {
                 auto &rd = vregs.get(inst.dst);
 
-                cc.mov(x86::rdi, vm);
-                cc.mov(x86::rsi, vid);
+                InvokeNode *invoke_node;
+                cc.invoke(Out(invoke_node),
+                    (uint64_t)gcvm_gather_sum,
+                    FuncSignature::build<double, GCVM *, uint32_t>());
+                invoke_node->set_arg(0, vm);
+                invoke_node->set_arg(1, vid);
+                invoke_node->set_ret(0, rd);
 
-                cc.call(imm((void *)gcvm_gather_sum));
-
-                cc.movsd(rd, x86::xmm0);
                 break;
             }
             case LOp::GATHER_MIN: {
                 auto &rd = vregs.get(inst.dst);
 
-                cc.mov(x86::rdi, vm);
-                cc.mov(x86::rsi, vid);
+                InvokeNode *invoke_node;
+                cc.invoke(Out(invoke_node),
+                    (uint64_t)gcvm_gather_min,
+                    FuncSignature::build<double, GCVM *, uint32_t>());
+                invoke_node->set_arg(0, vm);
+                invoke_node->set_arg(1, vid);
+                invoke_node->set_ret(0, rd);
 
-                cc.call(imm((void *)gcvm_gather_min));
-
-                cc.movsd(rd, x86::xmm0);
                 break;
             }
             case LOp::GATHER_MAX: {
                 auto &rd = vregs.get(inst.dst);
 
-                cc.mov(x86::rdi, vm);
-                cc.mov(x86::rsi, vid);
+                InvokeNode *invoke_node;
+                cc.invoke(Out(invoke_node),
+                    (uint64_t)gcvm_gather_max,
+                    FuncSignature::build<double, GCVM *, uint32_t>());
+                invoke_node->set_arg(0, vm);
+                invoke_node->set_arg(1, vid);
+                invoke_node->set_ret(0, rd);
 
-                cc.call(imm((void *)gcvm_gather_max));
-
-                cc.movsd(rd, x86::xmm0);
                 break;
             }
             case LOp::GATHER_COUNT: {
                 auto &rd = vregs.get(inst.dst);
 
-                cc.mov(x86::rdi, vm);
-                cc.mov(x86::rsi, vid);
+                InvokeNode *invoke_node;
+                cc.invoke(Out(invoke_node),
+                    (uint64_t)gcvm_gather_count,
+                    FuncSignature::build<double, GCVM *, uint32_t>());
+                invoke_node->set_arg(0, vm);
+                invoke_node->set_arg(1, vid);
+                invoke_node->set_ret(0, rd);
 
-                cc.call(imm((void *)gcvm_gather_count));
-
-                cc.movsd(rd, x86::xmm0);
                 break;
             }
             case LOp::SCATTER: {
-                cc.mov(x86::rdi, vm);
-                cc.mov(x86::rsi, vid);
-
-                cc.call(imm((void *)gcvm_scatter));
+                InvokeNode *invoke_node;
+                cc.invoke(Out(invoke_node),
+                    (uint64_t)gcvm_scatter,
+                    FuncSignature::build<void, GCVM *, uint32_t>());
+                invoke_node->set_arg(0, vm);
+                invoke_node->set_arg(1, vid);
 
                 break;
             }
@@ -1302,47 +1317,61 @@ JITFunc GCVM::jit_compile() {
                 cc.ucomisd(r1, x86::xmm0);
                 cc.je(labels[pc + 1]);
 
-                cc.mov(x86::rdi, vm);
-                cc.mov(x86::rsi, vid);
+                InvokeNode *invoke_node;
+                cc.invoke(Out(invoke_node),
+                    (uint64_t)gcvm_scatter,
+                    FuncSignature::build<void, GCVM *, uint32_t>());
+                invoke_node->set_arg(0, vm);
+                invoke_node->set_arg(1, vid);
 
-                cc.call(imm((void *)gcvm_scatter));
+                break;
             }
             case LOp::ITER_BEGIN: {
-                // Set up arguments
-                cc.mov(x86::rdi, vm);
-                cc.mov(x86::rsi, ctx);
-                cc.mov(x86::rdx, vid);
+                // Return value
+                x86::Gp ret = cc.new_gp32();
 
-                // Call VM implementation
-                cc.call(imm((void *)gcvm_iter_begin));
+                InvokeNode *invoke_node;
+                cc.invoke(Out(invoke_node),
+                    (uint64_t)gcvm_iter_begin,
+                    FuncSignature::build<uint32_t, GCVM *, Context *, uint32_t>());
+                invoke_node->set_arg(0, vm);
+                invoke_node->set_arg(1, ctx);
+                invoke_node->set_arg(2, vid);
+                invoke_node->set_ret(0, ret);
 
                 // Return in al -> test.
-                cc.test(x86::al, x86::al);
+                cc.test(ret, ret);
 
-                // If false, jump to skip target
+                // If 0, jump to skip target
                 cc.jz(labels[inst.target]);
                 break;
             }
             case LOp::ITER_NEXT: {
-                // Set up arguments
-                cc.mov(x86::rdi, vm);
-                cc.mov(x86::rsi, ctx);
-                cc.mov(x86::rdx, vid);
+                // Return value
+                x86::Gp ret = cc.new_gp32();
 
-                // Call VM implementation
-                cc.call(imm((void *)gcvm_iter_begin));
+                InvokeNode *invoke_node;
+                cc.invoke(Out(invoke_node),
+                    (uint64_t)gcvm_iter_next,
+                    FuncSignature::build<uint32_t, GCVM *, Context *, uint32_t>());
+                invoke_node->set_arg(0, vm);
+                invoke_node->set_arg(1, ctx);
+                invoke_node->set_arg(2, vid);
+                invoke_node->set_ret(0, ret);
 
                 // Return in al -> test.
-                cc.test(x86::al, x86::al);
+                cc.test(ret, ret);
 
                 // If false, jump to skip target
                 cc.jz(labels[inst.target]);
                 break;
             }
             case LOp::VOTE_CHANGE: {
-                cc.mov(x86::rdi, vm);
-
-                cc.call(imm((void *)gcvm_vote_change));
+                InvokeNode *invoke_node;
+                cc.invoke(Out(invoke_node),
+                    (uint64_t)gcvm_vote_change,
+                    FuncSignature::build<void, GCVM *>());
+                invoke_node->set_arg(0, vm);
                 break;
             }
             case LOp::RETURN: {
@@ -1356,6 +1385,9 @@ JITFunc GCVM::jit_compile() {
     }
 
     cc.bind(exit);
+    for(size_t i = 0; i < R_COUNT; i++) {
+        cc.movsd(x86::ptr(ctx, i * sizeof(double)), vregs.get(i));
+    }
     cc.ret();
 
     cc.end_func();
@@ -1397,6 +1429,8 @@ void GCVM::run(bool compile) {
                 } else {
                     execute_vertex(ctx, v);
                 }
+
+                printf("v_out = %f\n", ctx.v_out);
 
                 // Store context
                 store_context(ctx, v);
