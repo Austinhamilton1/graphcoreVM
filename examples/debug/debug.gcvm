@@ -1,4 +1,0 @@
-start:
-    LOADG r0
-    STOREV r0
-    HALT
