@@ -34,8 +34,8 @@ This project explores the intersection of:
     - CSR-based graph storage
     - Parallel execution across vertices
     - Frontier-based computation model
- - **Planned JIT Compilation**
-    - LLVM-based lowering from bytecode to native code
+ - **JIT Compilation**
+    - asmjit-based lowering from bytecode to native code
     - Whole-program vertex kernel compilation
     - Future specialization for graph structure and hardware
 
@@ -95,7 +95,6 @@ Key properties:
 
 ### Long-Term
 
- - LLVM-based JIT compiler
  - NUMA-aware and lock-free runtime
  - GPU / FPGA backend exploration
  - DSL for graph kernel definition
@@ -122,8 +121,8 @@ SCATTER
  - Encoding Specification: Done
  - Execution Model: Done
  - Runtime Engine Design: Done
- - Interpreter: In Progress
- - JIT Compiler: Planned
+ - Interpreter: Done
+ - JIT Compiler: Done
 
 ---
 
@@ -149,7 +148,7 @@ By defining an ISA, execution model, and rutime from the ground up, GCVM enables
 
 ---
 
-## Getting Started (Planned)
+## Getting Started
 
 ```
 # Build
@@ -162,7 +161,7 @@ make
 ./graphasm ../examples/{example}/{example}.graph -o {example}.g
 
 # Running
-./gcvm -b {example}.hex -g {example}.g -s [seed value (set for all vertices)] -o [output file (defaults to stdout)]
+./gcvm -b {example}.hex -g {example}.g -s [seed value (set for all vertices)] -o [output file (defaults to stdout)] [-j: JIT compile kernel]
 ```
 
 ---

@@ -1,13 +1,6 @@
-#include <assert.h>
-#include <string.h>
-#include <algorithm>
-#include <unordered_map>
-#include <cstring>
-#include <asmjit/x86.h>
+#include <cassert>
 
 #include "graphcore.h"
-
-using namespace asmjit;
 
 /*
  * Load a graph into the graph runtime.

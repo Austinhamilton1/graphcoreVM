@@ -121,9 +121,9 @@ All instructions share a common high-level structure:
 | 0x07 | MOV |
 | 0x08 | LOADI |
 | 0x09 | CMP_LT |
-| 0x10 | CMP_LTE |
-| 0x11 | CMP_EQ |
-| 0x12 | CMP_NEQ |
+| 0x0A | CMP_LTE |
+| 0x0B | CMP_EQ |
+| 0x0C | CMP_NEQ |
 
 ---
 

@@ -4,12 +4,10 @@
 #include <cstdint>
 #include <initializer_list>
 #include <atomic>
-#include <asmjit/x86.h>
 
 #include "state.h"
 #include "graph.h"
 #include "program.h"
-#include "lowered_ir.h"
 #include "jit.h"
 
 /* 

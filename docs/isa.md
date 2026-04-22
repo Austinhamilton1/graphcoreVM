@@ -18,11 +18,11 @@ Each program executes per-vertex in a graph context.
 
 Each vertex executes the same program with the following implicit context:
 
- - `self`: current vertex
- - `neighbors`: adjacent vertices
- - `edges`: edge attributes
  - `v_self`: current vertex value
  - `v_out`: output vertex value (next state)
+ - `in_deg`: current vertex in-degree
+ - `out_deg`: current vertex out-degree
+ - `g_size`: graph size
  - `n_val`: neighbor value (during traversal)
  - `e_attr`: edge attribute (during traversal)
 
@@ -182,7 +182,7 @@ Description: Determine if RS1 is less than RS2
 **CMP_LTE**
 ```
 Opcode: 0x01
-Subop:  0x10
+Subop:  0x0A
 Params: RD = RS1 <= RS2 ? 1 : 0
 Description: Determine if RS1 is less than or equal to RS2
 ```
@@ -190,7 +190,7 @@ Description: Determine if RS1 is less than or equal to RS2
 **CMP_EQ**
 ```
 Opcode: 0x01
-Subop:  0x11
+Subop:  0x0B
 Params: RD = RS1 == RS2 ? 1 : 0
 Description: Determine if RS1 is equal to RS2
 ```
@@ -198,7 +198,7 @@ Description: Determine if RS1 is equal to RS2
 **CMP_NEQ**
 ```
 Opcode: 0x01
-Subop:  0x12
+Subop:  0x0C
 Params: RD = RS1 != RS2 ? 1 : 0
 Description: Determine if RS1 is not equal to RS2
 ```
@@ -213,13 +213,17 @@ Opcode: 0x02
 Subop:  0x00
 Params: RD = vertex[IMM], IMM = attr_id
 Description: Load a vertex attribute
+  - attr_id 0 = v_self
+  - attr_id 1 = n_val
+  - attr_id 2 = in_deg
+  - attr_id 3 = out_deg
 ```
 
 **STOREV**
 ```
 Opcode: 0x02
 Subop:  0x01
-Params: vertex[IMM] = RS1, IMM = attr_id
+Params: v_out = RS1
 Description: Store a vertex attribute
 ```
 
@@ -227,7 +231,7 @@ Description: Store a vertex attribute
 ```
 Opcode: 0x02
 Subop:  0x02
-Params: RD = edge[IMM], IMM = attr_id
+Params: RD = edge_attr
 Description: Load an edge attribute
 ```
 
@@ -235,7 +239,7 @@ Description: Load an edge attribute
 ```
 Opcode: 0x02
 Subop:  0x03
-Params: RD = graph.size
+Params: RD = g_size
 Description: Load the graph size into a register
 ```
 
