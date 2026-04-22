@@ -11,7 +11,10 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(asmjit)
 
-add_library(graphcore SHARED src/graphcore.cpp)
+add_library(graphcore SHARED 
+    src/graphcore.cpp 
+    src/jit.cpp
+)
 target_include_directories(graphcore PRIVATE include)
 target_link_libraries(graphcore asmjit::asmjit)
 

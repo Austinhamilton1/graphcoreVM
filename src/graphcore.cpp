@@ -16,8 +16,8 @@ using namespace asmjit;
  */
 void GCVM::load_graph(const Graph &graph) {
     this->graph = graph;
-    vertices.active = std::vector<bool>(graph.size(), false);
-    vertices.next_active = std::vector<bool>(graph.size(), false);
+    vertices.active = std::vector<uint8_t>(graph.size(), 0);
+    vertices.next_active = std::vector<uint8_t>(graph.size(), 0);
     vertices.v_self = std::vector<double>(graph.size());
     vertices.v_out = std::vector<double>(graph.size());
 }
@@ -26,9 +26,13 @@ void GCVM::load_graph(const Graph &graph) {
  * Load a program into the graph runtime.
  * Arguments:
  *     const Program &program - Load this program.
+ *     bool precompile - Compile the kernel on load?
  */
-void GCVM::load_program(const Program &program) {
+void GCVM::load_program(const Program &program, bool precompile) {
     this->program = program;
+    if(precompile) {
+        compile();
+    }
 }
 
 /*
@@ -39,7 +43,7 @@ void GCVM::load_program(const Program &program) {
 void GCVM::set_seed_vertices(std::initializer_list<uint32_t> vertices) {
     for(uint32_t v : vertices) {
         assert(v < this->vertices.active.size());
-        this->vertices.active[v] = true;
+        this->vertices.active[v] = 1;
     }
 }
 
@@ -51,7 +55,7 @@ void GCVM::set_seed_vertices(std::initializer_list<uint32_t> vertices) {
 void GCVM::set_seed_vertices(bool all) {
     if(all) {
         for(int v = 0; v < graph.size(); v++)
-            vertices.active[v] = true;
+            vertices.active[v] = 1;
     }
 }
 
@@ -442,8 +446,15 @@ int GCVM::exec_gather_sum(const Instruction &inst, Context &ctx, uint32_t vertex
 
 int GCVM::exec_gather_min(const Instruction &inst, Context &ctx, uint32_t vertex_id, int pc) {
     // Calculate the min of the neighbors' v_self
-    double min = __DBL_MAX__;
-    for(auto e = graph.incoming_row_offsets[vertex_id]; e < graph.incoming_row_offsets[vertex_id + 1]; ++e) {
+    auto start = graph.incoming_row_offsets[vertex_id];
+    auto end = graph.incoming_row_offsets[vertex_id + 1];
+    if(start >= end) {
+        ctx.regs[inst.rd()] = 0.0;
+        return pc;
+    }
+
+    double min = vertices.v_self[graph.incoming_col_indices[start]];
+    for(auto e = start + 1; e < end; ++e) {
         uint32_t n = graph.incoming_col_indices[e];
         if(vertices.v_self[n] < min)
             min = vertices.v_self[n];
@@ -457,8 +468,15 @@ int GCVM::exec_gather_min(const Instruction &inst, Context &ctx, uint32_t vertex
 
 int GCVM::exec_gather_max(const Instruction &inst, Context &ctx, uint32_t vertex_id, int pc) {
     // Calculate the max of the neighbors' v_self
-    double max = __DBL_MIN__;
-    for(auto e = graph.incoming_row_offsets[vertex_id]; e < graph.incoming_row_offsets[vertex_id + 1]; ++e) {
+    auto start = graph.incoming_row_offsets[vertex_id];
+    auto end = graph.incoming_row_offsets[vertex_id + 1];
+    if(start >= end) {
+        ctx.regs[inst.rd()] = 0.0;
+        return pc;
+    }
+
+    double max = vertices.v_self[graph.incoming_col_indices[start]];
+    for(auto e = start + 1; e < end; ++e) {
         uint32_t n = graph.incoming_col_indices[e];
         if(vertices.v_self[n] > max)
             max = vertices.v_self[n];
@@ -487,7 +505,7 @@ int GCVM::exec_scatter(const Instruction &inst, Context &ctx, uint32_t vertex_id
     // Set the next_active of all neighbors to true
     for(auto e = graph.row_offsets[vertex_id]; e < graph.row_offsets[vertex_id + 1]; ++e) {
         uint32_t n = graph.col_indices[e];
-        vertices.next_active[n] = true;
+        vertices.next_active[n] = 1;
     }
 
     return pc;
@@ -498,7 +516,7 @@ int GCVM::exec_scatter_if(const Instruction &inst, Context &ctx, uint32_t vertex
     if(ctx.regs[inst.rs1()]) {
         for(auto e = graph.row_offsets[vertex_id]; e < graph.row_offsets[vertex_id + 1]; ++e) {
             uint32_t n = graph.col_indices[e];
-            vertices.next_active[n] = true;
+            vertices.next_active[n] = 1;
         }
     }
 
@@ -621,7 +639,7 @@ int GCVM::update_active_vertices() {
     for(int v = 0; v < graph.size(); v++) {
         if(vertices.next_active[v]) active_count++;
         vertices.active[v] = vertices.next_active[v];
-        vertices.next_active[v] = false;
+        vertices.next_active[v] = 0;
     }
     
     return active_count;
@@ -639,883 +657,27 @@ bool GCVM::check_convergence() {
 }
 
 /*
- * Pass over the bytecode and convert it to lowered IR.
- */
-void GCVM::lower() {
-    std::vector<LInstruction> lowered;
-    lowered.reserve(program.code.size());
-
-    /* Loop through the program and convert to lowered instructions */
-    for(int pc = 0; pc < program.code.size(); pc++) {
-        const Instruction &inst = program.code[pc];
-
-        LInstruction out{};
-
-        switch (inst.opcode()) {
-            /* CONTROL */
-            case OPCODE_CONTROL: {
-                switch(inst.subop()) {
-                    case SUBOP_NOP:
-                        // skip
-                        continue;
-
-                    case SUBOP_HALT:
-                        out.op = LOp::RETURN;
-                        break;
-
-                    case SUBOP_JMP:
-                        out.op = LOp::JMP;
-                        out.target = pc + inst.imm() + 1;
-                        break;
-
-                    case SUBOP_JZ:
-                        out.op = LOp::JZ;
-                        out.src1 = inst.rs1();
-                        out.target = pc + inst.imm() + 1;
-                        break;
-
-                    case SUBOP_JNZ:
-                        out.op = LOp::JNZ;
-                        out.src1 = inst.rs1();
-                        out.target = pc + inst.imm() + 1;
-                        break;
-                }
-                break;
-            }
-
-            /* ALU */
-            case OPCODE_ALU: {
-                out.dst = inst.rd();
-                out.src1 = inst.rs1();
-                out.src2 = inst.rs2();
-
-                switch(inst.subop()) {
-                    case SUBOP_ADD: out.op = LOp::ADD; break;
-                    case SUBOP_SUB: out.op = LOp::SUB; break;
-                    case SUBOP_MUL: out.op = LOp::MUL; break;
-                    case SUBOP_DIV: out.op = LOp::DIV; break;
-                    case SUBOP_MIN: out.op = LOp::MIN; break;
-                    case SUBOP_MAX: out.op = LOp::MAX; break;
-                    case SUBOP_ABS: out.op = LOp::ABS; break;
-                    case SUBOP_MOV: out.op = LOp::MOV; break;
-
-                    case SUBOP_LOADI:
-                        out.op = LOp::LOADI;
-                        out.imm = inst.imm();
-                        break;
-
-                    case SUBOP_CMPLT: out.op = LOp::CMPLT; break;
-                    case SUBOP_CMPLTE: out.op = LOp::CMPLTE; break;
-                    case SUBOP_CMPEQ: out.op = LOp::CMPEQ; break;
-                    case SUBOP_CMPNEQ: out.op = LOp::CMPNEQ; break;
-                }
-                break;
-            }
-            
-            /* MEMORY */
-            case OPCODE_MEMORY: {
-                switch(inst.subop()) {
-                    case SUBOP_LOADV: {
-                        out.dst = inst.rd();
-
-                        switch(inst.imm()) {
-                            case 0: out.op = LOp::LOAD_V_SELF; break;
-                            case 1: out.op = LOp::LOAD_N_VAL; break;
-                            case 2: out.op = LOp::LOAD_IN_DEG; break;
-                            case 3: out.op = LOp::LOAD_OUT_DEG; break;
-                        }
-                        break;
-                    }
-
-                    case SUBOP_STOREV: {
-                        out.op = LOp::STORE_V_OUT;
-                        out.src1 = inst.rs1();
-                        break;
-                    }
-
-                    case SUBOP_LOADE: {
-                        out.op = LOp::LOAD_E_ATTR;
-                        out.dst = inst.rd();
-                        break;
-                    }
-
-                    case SUBOP_LOADG: {
-                        out.op = LOp::LOAD_GRAPH_SIZE; 
-                        out.dst = inst.rd();
-                        break;
-                    }
-                }
-                break;
-            }
-
-            /* GRAPH */
-            case OPCODE_GRAPH: {
-                switch (inst.subop()) {
-                    case SUBOP_ITER_NEIGHBORS:
-                        out.op = LOp::ITER_BEGIN;
-                        out.target = pc + inst.imm();
-                        break;
-
-                    case SUBOP_END_ITER:
-                        out.op = LOp::ITER_NEXT;
-                        out.target = pc + inst.imm() + 1;
-                        break;
-
-                    case SUBOP_GATHER_SUM:
-                        out.op = LOp::GATHER_SUM;
-                        out.dst = inst.rd();
-                        break;
-
-                    case SUBOP_GATHER_MIN:
-                        out.op = LOp::GATHER_MIN;
-                        out.dst = inst.rd();
-                        break;
-
-                    case SUBOP_GATHER_MAX:
-                        out.op = LOp::GATHER_MAX;
-                        out.dst = inst.rd();
-                        break;
-
-                    case SUBOP_GATHER_COUNT:
-                        out.op = LOp::GATHER_COUNT;
-                        out.dst = inst.rd();
-                        break;
-
-                    case SUBOP_SCATTER:
-                        out.op = LOp::SCATTER;
-                        break;
-
-                    case SUBOP_SCATTER_IF:
-                        out.op = LOp::SCATTER_IF;
-                        out.src1 = inst.rs1();
-                        break;
-                }
-                break;
-            }
-
-            /* SYSTEM */
-            case OPCODE_SYSTEM: {
-                switch(inst.subop()) {
-                    case SUBOP_VOTE_CHANGE:
-                        out.op = LOp::VOTE_CHANGE;
-                        break;
-                }
-                break;
-            }
-        }
-
-        lowered.push_back(out);
-    }
-
-    lir = lowered;
-}
-
-/*
- * Print the lowered IR of the program.
- */
-void GCVM::dump_lir() {
-    for(int i = 0; i < lir.size(); i++) {
-        printf("%d: op=%s dst=%d src1=%d src2=%d, imm=%f, target=%d\n",
-            i,
-            lir[i].to_string().c_str(),
-            lir[i].dst,
-            lir[i].src1,
-            lir[i].src2,
-            lir[i].imm,
-            lir[i].target
-        );
-    }
-}
-
-/*
- * JIT call for ITER_BEGIN.
- * Arguments:
- *     GCVM *vm - Current VM instance.
- *     Context *ctx - Current context.
- *     uint32_t vertex - Iterate neighbors of this vertex.
- * Returns:
- *     bool - true if iteration is non-empty, false otherwise.
- */
-extern "C" uint32_t gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex) {
-    // Initialize iterators
-    ctx->iter_edge = vm->graph.incoming_row_offsets[vertex];
-    ctx->iter_end = vm->graph.incoming_row_offsets[vertex + 1];
-
-    if(ctx->iter_edge >= ctx->iter_end) {
-        // Iterator is empty
-        return 0;
-    }
-
-    // Load first neighbor
-    uint32_t e = ctx->iter_edge;
-    ctx->n_val = vm->vertices.v_self[vm->graph.incoming_col_indices[e]];
-    if(!vm->graph.incoming_edge_attr.empty()) {
-        ctx->e_attr = vm->graph.incoming_edge_attr[e];
-    }
-
-    // Non-empty iterator
-    return 1;
-}
-
-/*
- * JIT call for ITER_NEXT.
- * Arguments:
- *     GCVM *vm - Current VM instance.
- *     Context *ctx - Current context.
- *     uint32_t vertex - Iterate neighbors of this vertex.
- * Returns:
- *     bool - true if iteration is non-empty, false otherwise.
- */
-extern "C" uint32_t gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex) {
-    ctx->iter_edge++;
-
-    if(ctx->iter_edge < ctx->iter_end) {
-        // Load next neighbor
-        uint32_t e = ctx->iter_edge;
-        ctx->n_val = vm->vertices.v_self[vm->graph.incoming_col_indices[e]];
-        if(!vm->graph.incoming_edge_attr.empty()) {
-            ctx->e_attr = vm->graph.incoming_edge_attr[e];
-        }
-
-        return 1; // Non-empty iterator
-    }
-
-    // Empty iterator
-    return 0;
-}
-
-/*
- * JIT call for GATHER_SUM.
- * Arguments:
- *     GCVM *vm - Current VM instance.
- *     uint32_t vertex - Gather neighbors of this vertex.
- * Returns:
- *     double - Result of GATHER_SUM.
- */
-extern "C" double gcvm_gather_sum(GCVM *vm, uint32_t vertex) {
-    double sum = 0.0;
-    for(auto e = vm->graph.incoming_row_offsets[vertex]; e < vm->graph.incoming_row_offsets[vertex + 1]; e++) {
-        uint32_t n = vm->graph.incoming_col_indices[e];
-        sum += vm->vertices.v_self[n];
-    }
-    return sum;
-}
-
-/*
- * JIT call for GATHER_MIN.
- * Arguments:
- *     GCVM *vm - Current VM instance.
- *     uint32_t vertex - Gather neighbors of this vertex.
- * Returns:
- *     double - Result of GATHER_MIN.
- */
-extern "C" double gcvm_gather_min(GCVM *vm, uint32_t vertex) {
-    double min = __DBL_MAX__;
-    for(auto e = vm->graph.incoming_row_offsets[vertex]; e < vm->graph.incoming_row_offsets[vertex + 1]; e++) {
-        uint32_t n = vm->graph.incoming_col_indices[e];
-        double val = vm->vertices.v_self[n];
-        min = val < min ? val : min;
-    }
-    return min;
-}
-
-/*
- * JIT call for GATHER_MAX.
- * Arguments:
- *     GCVM *vm - Current VM instance.
- *     uint32_t vertex - Gather neighbors of this vertex.
- * Returns:
- *     double - Result of GATHER_MAX.
- */
-extern "C" double gcvm_gather_max(GCVM *vm, uint32_t vertex) {
-    double max = __DBL_MIN__;
-    for(auto e = vm->graph.incoming_row_offsets[vertex]; e < vm->graph.incoming_row_offsets[vertex + 1]; e++) {
-        uint32_t n = vm->graph.incoming_col_indices[e];
-        double val = vm->vertices.v_self[n];
-        max = val > max ? val : max;
-    }
-    return max;
-}
-
-/*
- * JIT call for GATHER_COUNT.
- * Arguments:
- *     GCVM *vm - Current VM instance.
- *     uint32_t vertex - Gather neighbors of this vertex.
- * Returns:
- *     double - Result of GATHER_COUNT.
- */
-extern "C" double gcvm_gather_count(GCVM *vm, uint32_t vertex) {
-    return vm->graph.in_degree(vertex);
-}
-
-/*
- * JIT call for SCATTER & SCATTER_IF.
- * Arguments:
- *     GCVM *vm - Current VM instance.
- *     uint32_t vertex - Scatter this vertex.
- */
-extern "C" void gcvm_scatter(GCVM *vm, uint32_t vertex) {
-    for(auto e = vm->graph.row_offsets[vertex]; e < vm->graph.row_offsets[vertex + 1]; e++) {
-        uint32_t n = vm->graph.col_indices[e];
-        vm->vertices.next_active[n] = true;
-    }
-}
-
-/*
- * JIT call for VOTE_CHANGE.
- * Arguments:
- *     GCVM *vm - Current VM instance.
- */
-extern "C" void gcvm_vote_change(GCVM *vm) {
-    vm->updates.fetch_add(1, std::memory_order_relaxed);
-}
-
-/* 
- * Load an immediate value into a register. 
- * Arguments: 
- *     x86::Assembler& a - Assembler to run commands on. 
- *     x86::Vec dst - Destination computer register. 
- *     double val - Value to load. 
- */ 
-static void load_imm(x86::Compiler& cc, x86::Vec dst, double val) { 
-    uint64_t bits;
-    std::memcpy(&bits, &val, sizeof(bits));
-
-    cc.mov(x86::rax, bits);
-    cc.movq(dst, x86::rax);
-}
-
-/*
  * Compile parts of the graph kernel.
- * Returns:
- *     JITFunc - JIT compiled kernel.
  */
-JITFunc GCVM::jit_compile() {
-    if(lir.size() == 0)
-        lower();
-    if(lir.size() == 0)
-        return nullptr;
-
-    // Initialization
-    CodeHolder code;
-    code.init(rt.environment(), rt.cpu_features());
-    x86::Compiler cc(&code);
-
-    auto fn_ptr = cc.add_func(FuncSignature::build<void, Context *, uint32_t, GCVM *>());
-
-    // Create virtual registers for the arguments of the function
-    x86::Gp ctx = cc.new_gp_ptr("ctx");
-    x86::Gp vid = cc.new_gp32("vid");
-    x86::Gp vm = cc.new_gp_ptr("gcvm");
-
-    /* Labels */
-    std::vector<Label> labels(lir.size());
-    for(auto &l : labels) l = cc.new_label();
-    Label exit = cc.new_label();
-
-    /* Register file. */
-    struct VMRegisterFile {
-        std::vector<x86::Vec> regs;
-
-        VMRegisterFile(x86::Compiler &cc, size_t count) {
-            regs.reserve(count);
-
-            for(size_t i = 0; i < count; i++) {
-                // Scalar float/double container in XMM register
-                regs.push_back(cc.new_xmm());
-            }
-        }
-
-        inline x86::Vec &get(uint32_t idx) {
-            if(idx >= R_COUNT)
-                throw std::runtime_error("Invalid register: " + idx);
-            return regs[idx];
-        }
-
-        inline const x86::Vec &get(uint32_t idx) const {
-            if(idx >= R_COUNT)
-                throw std::runtime_error("Invalid register: " + idx);
-            return regs[idx];
-        }
-    };
-
-    VMRegisterFile vregs(cc, R_COUNT);
-    
-    // Set the arguments of the function to those passed in from the runtime
-    fn_ptr->set_arg(0, ctx);
-    fn_ptr->set_arg(1, vid);
-    fn_ptr->set_arg(2, vm);
-
-    for(size_t pc = 0; pc < lir.size(); pc++) {
-        cc.bind(labels[pc]);
-        const auto &inst = lir[pc];
-
-        switch (inst.op) {
-            case LOp::ADD: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto &r2 = vregs.get(inst.src2);
-                auto &rd = vregs.get(inst.dst);
-
-                // Add to a temporary register to resolve potential collisions
-                auto tmp = cc.new_xmm();
-                cc.movsd(tmp, r1);
-                cc.addsd(tmp, r2);
-                cc.movsd(rd, tmp);
-                break;
-            }
-            case LOp::SUB: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto &r2 = vregs.get(inst.src2);
-                auto &rd = vregs.get(inst.dst);
-
-                // Subtract from a temporary register to resolve potential collisions
-                auto tmp = cc.new_xmm();
-                cc.movsd(tmp, r1);
-                cc.subsd(tmp, r2);
-                cc.movsd(rd, tmp);
-                break;
-            }
-            case LOp::MUL: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto &r2 = vregs.get(inst.src2);
-                auto &rd = vregs.get(inst.dst);
-
-                // Multiply to a temporary register to resolve potential collisions
-                auto tmp = cc.new_xmm();
-                cc.movsd(tmp, r1);
-                cc.mulsd(tmp, r2);
-                cc.movsd(rd, tmp);
-                break;
-            }
-            case LOp::DIV: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto &r2 = vregs.get(inst.src2);
-                auto &rd = vregs.get(inst.dst);
-
-                // Divide from a temporary register to resolve potential collisions
-                auto tmp = cc.new_xmm();
-                cc.movsd(tmp, r1);
-                cc.divsd(tmp, r2);
-                cc.movsd(rd, tmp);
-                break;
-            }
-            case LOp::MIN: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto &r2 = vregs.get(inst.src2);
-                auto &rd = vregs.get(inst.dst);
-
-                // Min with a temporary register to resolve potential collisions
-                auto tmp = cc.new_xmm();
-                cc.movsd(tmp, r1);
-                cc.minsd(tmp, r2);
-                cc.movsd(rd, tmp);
-                break;
-            }
-            case LOp::MAX: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto &r2 = vregs.get(inst.src2);
-                auto &rd = vregs.get(inst.dst);
-
-                // Max with a temporary register to resolve potential collisions
-                auto tmp = cc.new_xmm();
-                cc.movsd(tmp, r1);
-                cc.maxsd(tmp, r2);
-                cc.movsd(rd, tmp);
-                break;                
-            }
-            case LOp::ABS: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto &rd = vregs.get(inst.dst);
-
-                // Temporary register to hold the mask
-                auto tmp = cc.new_xmm();
-                auto val = cc.new_xmm();    // Computation tmp
-
-                // Clear sign bit via AND with 0x7FFFFFFFFFFFFFFFULL
-                uint64_t mask = 0x7FFFFFFFFFFFFFFFULL; 
-                cc.mov(x86::rax, mask);
-                cc.movq(tmp, x86::rax);
-
-                // Calculate ABS with correct register aliasing
-                cc.movsd(val, r1);
-                cc.andpd(val, tmp);
-                cc.movsd(rd, val);
-                break;
-            }
-            case LOp::MOV: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto &rd = vregs.get(inst.dst);
-
-                // Move registers
-                cc.movsd(rd, r1);
-                break;
-            }
-            case LOp::LOADI: {
-                // Load virtual registers
-                auto &rd = vregs.get(inst.dst);
-
-                // Load immediate values
-                load_imm(cc, rd, inst.imm);
-                break;
-            }
-            case LOp::CMPLT: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto &r2 = vregs.get(inst.src2);
-                auto &rd = vregs.get(inst.dst);
-
-                // CMPLT
-                Label is_true = cc.new_label();
-                Label done = cc.new_label();
-                cc.ucomisd(r1, r2);
-                cc.setb(x86::al);
-                cc.test(x86::al, x86::al);
-                cc.jnz(is_true);
-                load_imm(cc, rd, 0.0);
-                cc.jmp(done);
-                cc.bind(is_true);
-                load_imm(cc, rd, 1.0);
-                cc.bind(done);
-                break;
-            }
-            case LOp::CMPLTE: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto &r2 = vregs.get(inst.src2);
-                auto &rd = vregs.get(inst.dst);
-
-                // CMPLTE
-                Label is_true = cc.new_label();
-                Label done = cc.new_label();
-                cc.ucomisd(r1, r2);
-                cc.setbe(x86::al);
-                cc.test(x86::al, x86::al);
-                cc.jnz(is_true);
-                load_imm(cc, rd, 0.0);
-                cc.jmp(done);
-                cc.bind(is_true);
-                load_imm(cc, rd, 1.0);
-                cc.bind(done);
-                break;
-            }
-            case LOp::CMPEQ: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto &r2 = vregs.get(inst.src2);
-                auto &rd = vregs.get(inst.dst);
-
-                // CMPEQ
-                Label is_true = cc.new_label();
-                Label done = cc.new_label();
-                cc.ucomisd(r1, r2);
-                cc.sete(x86::al);
-                cc.test(x86::al, x86::al);
-                cc.jnz(is_true);
-                load_imm(cc, rd, 0.0);
-                cc.jmp(done);
-                cc.bind(is_true);
-                load_imm(cc, rd, 1.0);
-                cc.bind(done);
-                break;
-            }
-            case LOp::CMPNEQ: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto &r2 = vregs.get(inst.src2);
-                auto &rd = vregs.get(inst.dst);
-
-                // CMPNEQ
-                Label is_true = cc.new_label();
-                Label done = cc.new_label();
-                cc.ucomisd(r1, r2);
-                cc.setne(x86::al);
-                cc.test(x86::al, x86::al);
-                cc.jnz(is_true);
-                load_imm(cc, rd, 0.0);
-                cc.jmp(done);
-                cc.bind(is_true);
-                load_imm(cc, rd, 1.0);
-                cc.bind(done);
-                break;
-            }
-            case LOp::JMP: {
-                // Unconditional jump
-                cc.jmp(labels[inst.target]);
-                break;
-            }
-            case LOp::JZ: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto tmp = cc.new_xmm();    // Fixes name aliasing
-
-                // Conditional jump
-                cc.xorpd(tmp, tmp);
-                cc.ucomisd(r1, tmp);
-                cc.sete(x86::al);
-                cc.test(x86::al, x86::al);
-                cc.jnz(labels[inst.target]);
-                break;
-            }
-            case LOp::JNZ: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto xmm = cc.new_xmm();    // Fixes name aliasing
-
-                // Conditional jump
-                cc.xorpd(xmm, xmm);
-                cc.ucomisd(r1, xmm);
-                cc.setne(x86::al);
-                cc.test(x86::al, x86::al);
-                cc.jnz(labels[inst.target]);
-                break;
-                break;
-            }
-            case LOp::LOAD_V_SELF: {
-                // Load virtual registers
-                auto &rd = vregs.get(inst.dst);
-
-                // Load from memory
-                cc.movsd(rd, x86::ptr(ctx, offsetof(Context, v_self)));
-                break;
-            }
-            case LOp::LOAD_N_VAL: {
-                // Load virtual registers
-                auto &rd = vregs.get(inst.dst);
-
-                // Load from memory
-                cc.movsd(rd, x86::ptr(ctx, offsetof(Context, n_val)));
-                break;
-            }
-            case LOp::LOAD_IN_DEG: {
-                // Load virtual registers
-                auto &rd = vregs.get(inst.dst);
-
-                // Load from memory
-                cc.movsd(rd, x86::ptr(ctx, offsetof(Context, in_deg)));
-                break;
-            }
-            case LOp::LOAD_OUT_DEG: {
-                // Load virtual registers
-                auto &rd = vregs.get(inst.dst);
-
-                // Load from memory
-                cc.movsd(rd, x86::ptr(ctx, offsetof(Context, out_deg)));
-                break;
-            }
-            case LOp::LOAD_GRAPH_SIZE: {
-                // Load virtual registers
-                auto &rd = vregs.get(inst.dst);
-
-                // Load from memory
-                cc.movsd(rd, x86::ptr(ctx, offsetof(Context, g_size)));
-                break;
-            }
-            case LOp::STORE_V_OUT: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-
-                // Store into memory
-                cc.movsd(x86::ptr(ctx, offsetof(Context, v_out)), r1);
-                break;
-            }
-            case LOp::LOAD_E_ATTR: {
-                // Load virtual registers
-                auto &rd = vregs.get(inst.dst);
-
-                // Load from memory
-                cc.movsd(rd, x86::ptr(ctx, offsetof(Context, e_attr)));
-                break;
-            }
-            case LOp::GATHER_SUM: {
-                // Load virtual registers
-                auto &rd = vregs.get(inst.dst);
-
-                // Call out to runtime
-                InvokeNode *invoke_node;
-                cc.invoke(Out(invoke_node),
-                    (uint64_t)gcvm_gather_sum,
-                    FuncSignature::build<double, GCVM *, uint32_t>());
-                invoke_node->set_arg(0, vm);
-                invoke_node->set_arg(1, vid);
-                invoke_node->set_ret(0, rd);
-
-                break;
-            }
-            case LOp::GATHER_MIN: {
-                // Load virtual registers
-                auto &rd = vregs.get(inst.dst);
-
-                // Call out to runtime
-                InvokeNode *invoke_node;
-                cc.invoke(Out(invoke_node),
-                    (uint64_t)gcvm_gather_min,
-                    FuncSignature::build<double, GCVM *, uint32_t>());
-                invoke_node->set_arg(0, vm);
-                invoke_node->set_arg(1, vid);
-                invoke_node->set_ret(0, rd);
-
-                break;
-            }
-            case LOp::GATHER_MAX: {
-                // Load virtual registers
-                auto &rd = vregs.get(inst.dst);
-
-                // Call out to runtime
-                InvokeNode *invoke_node;
-                cc.invoke(Out(invoke_node),
-                    (uint64_t)gcvm_gather_max,
-                    FuncSignature::build<double, GCVM *, uint32_t>());
-                invoke_node->set_arg(0, vm);
-                invoke_node->set_arg(1, vid);
-                invoke_node->set_ret(0, rd);
-
-                break;
-            }
-            case LOp::GATHER_COUNT: {
-                // Load virtual registers
-                auto &rd = vregs.get(inst.dst);
-
-                // Call out to runtime
-                InvokeNode *invoke_node;
-                cc.invoke(Out(invoke_node),
-                    (uint64_t)gcvm_gather_count,
-                    FuncSignature::build<double, GCVM *, uint32_t>());
-                invoke_node->set_arg(0, vm);
-                invoke_node->set_arg(1, vid);
-                invoke_node->set_ret(0, rd);
-
-                break;
-            }
-            case LOp::SCATTER: {
-                // Call out to runtime
-                InvokeNode *invoke_node;
-                cc.invoke(Out(invoke_node),
-                    (uint64_t)gcvm_scatter,
-                    FuncSignature::build<void, GCVM *, uint32_t>());
-                invoke_node->set_arg(0, vm);
-                invoke_node->set_arg(1, vid);
-
-                break;
-            }
-            case LOp::SCATTER_IF: {
-                // Load virtual registers
-                auto &r1 = vregs.get(inst.src1);
-                auto tmp = cc.new_xmm();    // Prevents name aliasing
-
-                // Conditional scatter
-                cc.xorpd(tmp, tmp);
-                cc.ucomisd(r1, tmp);
-                cc.je(labels[pc + 1]);
-
-                // Call out to runtime
-                InvokeNode *invoke_node;
-                cc.invoke(Out(invoke_node),
-                    (uint64_t)gcvm_scatter,
-                    FuncSignature::build<void, GCVM *, uint32_t>());
-                invoke_node->set_arg(0, vm);
-                invoke_node->set_arg(1, vid);
-
-                break;
-            }
-            case LOp::ITER_BEGIN: {
-                // Return value
-                x86::Gp ret = cc.new_gp32();
-
-                // Call out to runtime
-                InvokeNode *invoke_node;
-                cc.invoke(Out(invoke_node),
-                    (uint64_t)gcvm_iter_begin,
-                    FuncSignature::build<uint32_t, GCVM *, Context *, uint32_t>());
-                invoke_node->set_arg(0, vm);
-                invoke_node->set_arg(1, ctx);
-                invoke_node->set_arg(2, vid);
-                invoke_node->set_ret(0, ret);
-
-                // Return in al -> test.
-                cc.test(ret, ret);
-
-                // If 0, jump to skip target
-                cc.jz(labels[inst.target]);
-                break;
-            }
-            case LOp::ITER_NEXT: {
-                // Return value
-                x86::Gp ret = cc.new_gp32();
-
-                // Call out to runtime
-                InvokeNode *invoke_node;
-                cc.invoke(Out(invoke_node),
-                    (uint64_t)gcvm_iter_next,
-                    FuncSignature::build<uint32_t, GCVM *, Context *, uint32_t>());
-                invoke_node->set_arg(0, vm);
-                invoke_node->set_arg(1, ctx);
-                invoke_node->set_arg(2, vid);
-                invoke_node->set_ret(0, ret);
-
-                // Return in al -> test.
-                cc.test(ret, ret);
-
-                // If not 0, jump back to loop target
-                cc.jnz(labels[inst.target]);
-                break;
-            }
-            case LOp::VOTE_CHANGE: {
-                // Call out to runtime
-                InvokeNode *invoke_node;
-                cc.invoke(Out(invoke_node),
-                    (uint64_t)gcvm_vote_change,
-                    FuncSignature::build<void, GCVM *>());
-                invoke_node->set_arg(0, vm);
-                break;
-            }
-            case LOp::RETURN: {
-                // Jump to exit to finalize
-                cc.jmp(exit);
-                break;
-            }
-            default: {
-                throw std::runtime_error("Invalid operation");
-            }
-        }
-    }
-
-    // Return from function and end function
-    cc.bind(exit);
-    cc.ret();
-    cc.end_func();
-    cc.finalize();
-
-    // Compile the function
-    JITFunc fn;
-    Error err = rt.add(&fn, &code);
-    if(err != Error::kOk) {
-        throw std::runtime_error("Could not create function");
-        return nullptr;
-    }
-
-    return fn;
+void GCVM::compile() {
+    if(!jit.is_initialized())
+        jit.init(graph, vertices, &updates);
+    jit_compiled = jit.compile(program);
+    if(jit_compiled == nullptr)
+        throw std::runtime_error("JIT compiled code return nullptr");
 }
 
 /*
  * Run the program on the VM.
  * Arguments:
- *     bool compile - Should we JIT parts of the kernel?
+ *     bool should_compile - Should we JIT parts of the kernel?
  */
-void GCVM::run(bool compile) {
+void GCVM::run(bool should_compile) {
     bool converged = false;
 
     while(!converged) {
-        if(compile && !jit_compiled) {
-            jit_compiled = jit_compile();
+        if(should_compile && !jit_compiled) {
+            compile();
         }
         // 1. Iterate active vertices
         for(int v = 0; v < graph.size(); v++) {
@@ -1527,7 +689,7 @@ void GCVM::run(bool compile) {
 
                 // Execute the kernel for each active vertex
                 if(jit_compiled) {
-                    jit_compiled(&ctx, v, this);
+                    jit_compiled(&ctx, v, jit.get_runtime());
                 } else {
                     execute_vertex(ctx, v);
                 }

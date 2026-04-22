@@ -79,7 +79,9 @@ int main(int argc, char **argv) {
     runtime.load_graph(graph);
     runtime.set_seed_self(seed_value);
     runtime.set_seed_vertices(true);
-    runtime.load_program(program);
+    runtime.load_program(program, compile);
+
+    //return 0;
 
     auto start = std::chrono::high_resolution_clock::now();
     runtime.run(compile);

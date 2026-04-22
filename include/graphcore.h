@@ -6,58 +6,11 @@
 #include <atomic>
 #include <asmjit/x86.h>
 
+#include "state.h"
 #include "graph.h"
 #include "program.h"
 #include "lowered_ir.h"
-
-#define R_COUNT 32
-
-
-/*
- * Vertex state held across execution runs.
- * VertexState[v] = state of vertex v.
- */
-struct VertexState {
-    std::vector<double> v_self;     // Current (read-only) value of node
-    std::vector<double> v_out;      // Next (write-only) value of node
-    std::vector<bool> active;       // Current active state of node
-    std::vector<bool> next_active;  // Next active state of node
-};
-
-/* 
- * Transient state that wraps each node for each superstep.
- * This is a stack-allocated data structure. It's purpose is
- * to ensure global state is managed by the runtime and not
- * touched by the kernel directly.
- */
-struct Context {
-    double regs[32];    // General purpose registers
-
-    double v_self;      // Read-only current value of node
-    double v_out;       // Write-only next value of node
-
-    double n_val;       // Iterator (next neighbor node ID)
-    double in_deg;      // Node in-degree
-    double out_deg;     // Node out-degree
-    double g_size;      // Graph size
-    double e_attr;      // Iterator (next edge attribute)
-
-    uint32_t iter_edge; // Current edge index
-    uint32_t iter_end;  // End of adjacency list
-};
-
-class GCVM;
-using JITFunc = void(*)(Context *, uint32_t, GCVM *);
-
-/* Allow JIT functions access to GCVM internals. */
-extern "C" uint32_t gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex);
-extern "C" uint32_t gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex);
-extern "C" double gcvm_gather_sum(GCVM *vm, uint32_t vertex);
-extern "C" double gcvm_gather_min(GCVM *vm, uint32_t vertex);
-extern "C" double gcvm_gather_max(GCVM *vm, uint32_t vertex);
-extern "C" double gcvm_gather_count(GCVM *vm, uint32_t vertex);
-extern "C" void gcvm_scatter(GCVM *vm, uint32_t vertex);
-extern "C" void gcvm_vote_change(GCVM *vm);
+#include "jit.h"
 
 /* 
  * Graph Runtime. This class manages the runtime.
@@ -68,20 +21,10 @@ private:
     Graph graph;                    // CSR format graph
     Program program;                // Bytecode program
     VertexState vertices;           // SoA of vertex states
-    std::atomic<size_t> updates;    // Number of vertices affected by kernel
+    std::atomic<uint32_t> updates;  // Number of vertices affected by kernel
     std::vector<LInstruction> lir;  // Lowered IR representation for JIT compilation
-    JITFunc jit_compiled;           // Compiled JIT kernel 
-    asmjit::JitRuntime rt;          // Save runtime to ensure lifetime
-
-    /* Allow JIT functions access to GCVM internals. */
-    friend uint32_t gcvm_iter_begin(GCVM *vm, Context *ctx, uint32_t vertex);
-    friend uint32_t gcvm_iter_next(GCVM *vm, Context *ctx, uint32_t vertex);
-    friend double gcvm_gather_sum(GCVM *vm, uint32_t vertex);
-    friend double gcvm_gather_min(GCVM *vm, uint32_t vertex);
-    friend double gcvm_gather_max(GCVM *vm, uint32_t vertex);
-    friend double gcvm_gather_count(GCVM *vm, uint32_t vertex);
-    friend void gcvm_scatter(GCVM *vm, uint32_t vertex);
-    friend void gcvm_vote_change(GCVM *vm);
+    JIT jit;                        // JIT runtime for compiling kernels
+    JITFunc jit_compiled;
 
     /*
      * Execute a CONTROL operation.
@@ -211,10 +154,8 @@ private:
 
     /*
      * Compile parts of the graph kernel.
-     * Returns:
-     *     JITFunc - JIT compiled kernel.
      */
-    JITFunc jit_compile();
+    void compile();
 
 public:
     /* Default constructor and destructor. */
@@ -232,8 +173,9 @@ public:
      * Load a program into the graph runtime.
      * Arguments:
      *     const Program &program - Load this program.
+     *     bool precompile - Compile the kernel on load?
      */
-    void load_program(const Program &program);
+    void load_program(const Program &program, bool precompile);
 
     /*
      * Set seed vertices to be initially active.
@@ -257,26 +199,11 @@ public:
     void set_seed_self(double value);
 
     /*
-     * Pass over the bytecode and convert it to lowered IR.
-     */
-    void lower();
-
-    /*
-     * Prepare internal program for JIT compiled kernel.
-     */
-    void compile_prepare();
-
-    /*
-     * Print the lowered IR of the program.
-     */
-    void dump_lir();
-
-    /*
      * Run the program on the VM.
      * Arguments:
-     *     bool compile - Should we JIT parts of the kernel?
+     *     bool should_compile - Should we JIT parts of the kernel?
      */
-    void run(bool compile);
+    void run(bool should_compile);
 
     /*
      * Report the results of running the kernel.
