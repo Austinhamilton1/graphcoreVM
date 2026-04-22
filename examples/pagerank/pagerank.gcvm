@@ -56,13 +56,13 @@ start:
         SUB r9, r8, r7
         ABS r9, r9
 
-        ; Threshold = 0.01
+        ; Threshold = 1 / 8191 (Lowest value we can go currently because of 14 bit encoding)
         LOADI r30, 1
-        LOADI r31, 100
+        LOADI r31, 8192
         DIV r4, r30, r31
 
         ; if diff > threshold, update
-        CMP_LT r9, r4, r9
+        CMP_LTE r9, r4, r9
         JNZ r9, changed
 
         ; No change -> halt this vertex
