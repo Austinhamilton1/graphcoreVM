@@ -58,7 +58,7 @@ start:
 
         ; Threshold = 1 / 8191 (Lowest value we can go currently because of 14 bit encoding)
         LOADI r30, 1
-        LOADI r31, 8192
+        LOADI r31, 8191
         DIV r4, r30, r31
 
         ; if diff > threshold, update
