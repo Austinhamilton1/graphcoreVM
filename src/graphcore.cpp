@@ -19,48 +19,31 @@ void GCVM::load_graph(const Graph &graph) {
  * Load a program into the graph runtime.
  * Arguments:
  *     const Program &program - Load this program.
- *     bool precompile - Compile the kernel on load?
  */
-void GCVM::load_program(const Program &program, bool precompile) {
+void GCVM::load_program(const Program &program) {
     this->program = program;
-    if(precompile) {
-        compile();
-    }
 }
 
 /*
  * Set seed vertices to be initially active.
  * Arguments:
- *     std::initializer_list<uint32_t> vertices - Initialize these vertices.
+ *     uint32_t v - Vertex to set.
+ *     bool active - Active or not.
  */
-void GCVM::set_seed_vertices(std::initializer_list<uint32_t> vertices) {
-    for(uint32_t v : vertices) {
-        assert(v < this->vertices.active.size());
-        this->vertices.active[v] = 1;
-    }
-}
-
-/*
- * Set seed vertices to be initially active.
- * Arguments:
- *     bool all - Initialize all vertices if true.
- */
-void GCVM::set_seed_vertices(bool all) {
-    if(all) {
-        for(int v = 0; v < graph.size(); v++)
-            vertices.active[v] = 1;
-    }
+void GCVM::set_active(uint32_t v, bool active) {
+    assert(v < vertices.active.size());
+    vertices.active[v] = active ? 1 : 0;
 }
 
 /*
  * Set the initial value of v_self.
  * Arguments:
- *     double value - The value to seed the graph with.
+ *     uint32_t v - Vertex to set.
+ *     double value - The value to seed the vertex with.
  */
-void GCVM::set_seed_self(double value) {
-    for(int v = 0; v < graph.size(); v++) {
-        vertices.v_self[v] = value;
-    }
+void GCVM::set_seed_self(uint32_t v, double value) {
+    assert(v < vertices.v_self.size());
+    vertices.v_self[v] = value; 
 }
 
 /*

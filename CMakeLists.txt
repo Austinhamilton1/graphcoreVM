@@ -11,6 +11,14 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(asmjit)
 
+FetchContent_Declare(
+    yaml-cpp
+    GIT_REPOSITORY  https://github.com/jbeder/yaml-cpp.git
+    GIT_TAG         master
+)
+
+FetchContent_MakeAvailable(yaml-cpp)
+
 add_library(graphcore SHARED 
     src/graphcore.cpp 
     src/jit.cpp
@@ -18,12 +26,6 @@ add_library(graphcore SHARED
 target_include_directories(graphcore PRIVATE include)
 target_link_libraries(graphcore asmjit::asmjit)
 
-add_executable(gcvmasm src/gcvmasm.cpp)
-target_include_directories(gcvmasm PRIVATE include)
-
-add_executable(graphasm src/graphasm.cpp)
-target_include_directories(graphasm PRIVATE include)
-
 add_executable(gcvm src/gcvm.cpp)
 target_include_directories(gcvm PRIVATE include)
-target_link_libraries(gcvm PRIVATE graphcore)
+target_link_libraries(gcvm PRIVATE graphcore yaml-cpp::yaml-cpp)

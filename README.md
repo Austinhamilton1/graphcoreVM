@@ -156,12 +156,23 @@ mkdir build && cd build
 cmake ..
 make 
 
+# Run PageRank on large graph with JIT compilation enabled
+config.yml:
+   seed:
+      default: 0.00000307
+   
+   active:
+      default: true
+   
+   execution:
+      jit: true
+
 # Building bytecode and graph files
-./gcvmasm ../examples/{example}/{example}.gcvm -o {example}.hex
-./graphasm ../examples/{example}/{example}.graph -o {example}.g
+./gcvm assemble ../examples/pagerank/pagerank.gcvm -o pagerank.bc
+./gcvm graph ../examples/pagerank/big_pagerank.graph -o pagerank.g
 
 # Running
-./gcvm -b {example}.hex -g {example}.g -s [seed value (set for all vertices)] -o [output file (defaults to stdout)] [-j: JIT compile kernel]
+./gcvm run -b pagerank.bc -g pagerank.g -c config.yml -o pagerank.out
 ```
 
 ---

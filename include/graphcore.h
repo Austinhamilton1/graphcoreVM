@@ -172,30 +172,24 @@ public:
      * Load a program into the graph runtime.
      * Arguments:
      *     const Program &program - Load this program.
-     *     bool precompile - Compile the kernel on load?
      */
-    void load_program(const Program &program, bool precompile);
+    void load_program(const Program &program);
 
     /*
      * Set seed vertices to be initially active.
      * Arguments:
-     *     std::initializer_list<uint32_t> vertices - Initialize these vertices.
+     *     uint32_t v - Vertex to set.
+     *     bool active - Active or not.
      */
-    void set_seed_vertices(std::initializer_list<uint32_t> vertices);
-
-    /*
-     * Set seed vertices to be initially active.
-     * Arguments:
-     *     bool all - Initialize all vertices if true.
-     */
-    void set_seed_vertices(bool all);
+    void set_active(uint32_t v, bool active);
 
     /*
      * Set the initial value of v_self.
      * Arguments:
-     *     double value - The value to seed the graph with.
+     *     uint32_t v - Vertex to set.
+     *     double value - The value to seed the vertex with.
      */
-    void set_seed_self(double value);
+    void set_seed_self(uint32_t v, double value);
 
     /*
      * Run the program on the VM.
