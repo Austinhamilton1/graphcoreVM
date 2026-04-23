@@ -2,12 +2,8 @@ start:
     ; Sum = 0
     LOADI r1, 0
 
-    ; Calculate 0.85 (integer immediates only for now)
-    LOADI r30, 85
-    LOADI r31, 100
-
     ; r5 = damping (0.85)
-    DIV r5, r30, r31
+    LOADI r5, 0.85
 
     ; r6 = (1 - d) / N
     LOADI r30, 1
@@ -56,10 +52,8 @@ start:
         SUB r9, r8, r7
         ABS r9, r9
 
-        ; Threshold = 1 / 8191 (Lowest value we can go currently because of 14 bit encoding)
-        LOADI r30, 1
-        LOADI r31, 8191
-        DIV r4, r30, r31
+        ; Threshold = 0.00001
+        LOADI r4, 0.00001
 
         ; if diff > threshold, update
         CMP_LTE r9, r4, r9

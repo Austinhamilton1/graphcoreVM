@@ -36,15 +36,15 @@ public:
         }
 
         // Pass 2: emit instructions
-        std::vector<Instruction> program;
+        Program program;
         pc = 0;
 
         for (auto& tokens : parsed) {
-            program.push_back(encode(tokens, labels, pc));
+            encode(program, tokens, labels, pc);
             pc++;
         }
 
-        return { program };
+        return program;
     }
 
 private:
@@ -105,7 +105,8 @@ private:
     // Encoding
     // ============================
 
-    Instruction encode(const std::vector<std::string>& t,
+    void encode(Program &program,
+                       const std::vector<std::string>& t,
                        const std::unordered_map<std::string, int>& labels,
                        int pc)
     {
@@ -138,7 +139,12 @@ private:
         else if (op == "LOADI") {
             expect(t, 3);
             inst.set_rd(parse_reg(t[1]));
-            inst.set_imm(parse_imm(t[2]));
+            double constant = parse_const(t[2]);
+            if(program.constant_map.find(constant) == program.constant_map.end()) {
+                program.constants.push_back(constant);
+                program.constant_map[constant] = program.constants.size() - 1;
+            }
+            inst.set_imm(program.constant_map[constant]);
         }
 
         // ---- MEMORY ----
@@ -202,7 +208,7 @@ private:
             // no operands
         }
 
-        return inst;
+        return program.code.push_back(inst);
     }
 
     // ============================
@@ -218,6 +224,10 @@ private:
 
     int parse_imm(const std::string& tok) {
         return std::stoi(tok);
+    }
+
+    double parse_const(const std::string &tok) {
+        return std::stod(tok);
     }
 
     int resolve_label(const std::string& name,

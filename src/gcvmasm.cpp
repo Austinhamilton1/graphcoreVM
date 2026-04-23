@@ -71,6 +71,12 @@ int main(int argc, char **argv) {
         return -1;
     }
 
+    int16_t constant_count = static_cast<int16_t>(program.constants.size());
+    outFile.write(reinterpret_cast<char *>(&constant_count), sizeof(constant_count));
+    for(double &constant : program.constants) {
+        outFile.write(reinterpret_cast<char *>(&constant), sizeof(constant));
+    }
+
     // Write the assembled program to the file
     for(Instruction &inst : program.code) {
         outFile.write(reinterpret_cast<char *>(&inst.raw), sizeof(inst.raw));

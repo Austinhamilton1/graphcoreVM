@@ -115,7 +115,7 @@ std::vector<LInstruction> JIT::lower(const Program &program) const {
 
                     case SUBOP_LOADI:
                         out.op = LOp::LOADI;
-                        out.imm = inst.imm();
+                        out.imm = program.constants[inst.imm()];
                         break;
 
                     case SUBOP_CMPLT: out.op = LOp::CMPLT; break;

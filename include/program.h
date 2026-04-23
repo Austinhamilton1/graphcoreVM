@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <fstream>
+#include <unordered_map>
 
 #define OPCODE_CONTROL          0x00
 #define OPCODE_ALU              0x01
@@ -152,6 +153,8 @@ struct Instruction {
  */
 struct Program {
     std::vector<Instruction> code;
+    std::vector<double> constants;
+    std::unordered_map<double, int16_t> constant_map;
 
     /*
      * Read bytecode from a binary instruction file.
@@ -163,6 +166,16 @@ struct Program {
 
         if(!file.is_open()) {
             throw std::runtime_error("Could not open bytecode file");
+        }
+
+        int16_t constant_count;
+        double constant;
+        if(file.read(reinterpret_cast<char *>(&constant_count), sizeof(constant_count))) {
+            for(int16_t i = 0; i < constant_count; i++) {
+                if(file.read(reinterpret_cast<char *>(&constant), sizeof(constant))) {
+                    constants.push_back(constant);
+                }
+            }
         }
 
         // Read in an instruction at a time

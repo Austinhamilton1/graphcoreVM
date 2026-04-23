@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <atomic>
+#include <algorithm>
 
 #include "state.h"
 #include "graph.h"

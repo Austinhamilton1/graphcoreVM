@@ -229,7 +229,7 @@ void GCVM::exec_mov(const Instruction &inst, Context &ctx) {
 }
 
 void GCVM::exec_loadi(const Instruction &inst, Context &ctx) {
-    ctx.regs[inst.rd()] = inst.imm();    
+    ctx.regs[inst.rd()] = program.constants[inst.imm()];  
 }
 
 void GCVM::exec_cmp_lt(const Instruction &inst, Context &ctx) {
