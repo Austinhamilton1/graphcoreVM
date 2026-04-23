@@ -80,11 +80,7 @@ Key properties:
 
 ### Short-Term
 
- - Build a working interpreter for GCVM bytecode
- - Implement core graph primitives (`GATHER_SUM`, `SCATTER`)
- - Execute basic algorithms:
-    - PageRank
-    - Breadth-First Search (BFS)
+ - Create shell for running programs and debugging
 
 ### Medium-Term
 
