@@ -1,8 +1,8 @@
-# GraphCore VM ISA Encoding Specification (GCVM-ENC v0.2)
+# GraphCore VM ISA Encoding Specification (GCVM-ENC v0.3)
 
 ## 1. Overview
 
-This document defines the refined binary encoding for the GraphCore VM (GCVM). This version improves decode simplicity, consistency, and hardware friendliness.
+This document defines the refined binary encoding for the GraphCore VM (GCVM). This version adds a constant pool to program memory.
 
 All instructions are 32 bits wide and use structured formats with clearly defined field roles.
 
@@ -15,6 +15,7 @@ All instructions are 32 bits wide and use structured formats with clearly define
  - Consistent field placement across formats
  - Explicit sub-opcodes (no overloaded flags)
  - First class support for graph operations
+ - 16-bit constant pool for arbitary immediates
 
 ---
 
@@ -187,13 +188,13 @@ RS2    = 3
 
 ---
 
-### `LOADI r1 42`
+### `LOADI r1 0.154`
 
 ```
 OPCODE = 0x01
 SUBOP  = 0x08
 RD     = 1
-IMM    = 42
+IMM    = indexof(ConstantPool, 0.154)
 ```
 
 ---
@@ -209,19 +210,14 @@ MODE   = 0
 
 ---
 
-## 9. Key Improvements from v0.1
+## 9. Key Improvements from v0.2
 
- - Unified field layout across all instructions
- - Explicit opcode + subopcode hierarchy
- - Cleaner separation of instruction categories
- - First class G-type format for graph operations
- - Hardware-friendly decoding (fixed positions)
+ - Constant pooling
 
 ---
 
 ## 10. Future Work
 
- - Expand immediate width (prefix instructions)
  - Add vector/warp execution formats
  - Add hardware hint bits for FPGA/GPU
  - Introduce message-passing specific encodings
@@ -230,4 +226,4 @@ MODE   = 0
 
 ## 11. Version
 
- - v0.2 Refined encoding with structured formats
+ - v0.3 Refined encoding with constant pooling
