@@ -5,11 +5,20 @@
 #include <initializer_list>
 #include <atomic>
 #include <algorithm>
+#include <unordered_set>
 
 #include "state.h"
 #include "graph.h"
 #include "program.h"
 #include "jit.h"
+
+struct DebugInfo {
+    Context ctx;
+    VertexState *state;
+    uint32_t vertex_id;
+    uint32_t updates;
+    bool finished;
+};
 
 /* 
  * Graph Runtime. This class manages the runtime.
@@ -23,7 +32,12 @@ private:
     std::atomic<uint32_t> updates;  // Number of vertices affected by kernel
     std::vector<LInstruction> lir;  // Lowered IR representation for JIT compilation
     JIT jit;                        // JIT runtime for compiling kernels
-    JITFunc jit_compiled;
+    JITFunc jit_compiled;           // JIT compiled kernel
+
+    /* Used for debugging. */
+    std::unordered_set<int> break_points;
+    int debug_pc;
+    uint32_t debug_vertex;
 
     /*
      * Execute a CONTROL operation.
@@ -152,13 +166,22 @@ private:
     void execute_vertex(Context &ctx, uint32_t vertex_id);
 
     /*
+     * Execute a step of the kernel on a vertex.
+     * Arguments:
+     *     Context &ctx - Execute with this context (register values).
+     * Returns:
+     *     int - The PC after the current step.
+     */
+    int debug_vertex_step(Context &ctx);
+
+    /*
      * Compile parts of the graph kernel.
      */
     void compile();
 
 public:
     /* Default constructor and destructor. */
-    GCVM() : updates(0), jit_compiled(nullptr) {}
+    GCVM() : updates(0), jit_compiled(nullptr), debug_pc(0), debug_vertex(0) {}
     ~GCVM() = default;
 
     /*
@@ -197,6 +220,27 @@ public:
      *     bool should_compile - Should we JIT parts of the kernel?
      */
     void run(bool should_compile);
+
+    /*
+     * Set a break point in the kernel.
+     * Arguments:
+     *     size_t pc - Break at this PC in the kernel.
+     */
+    void set_break_point(size_t pc);
+
+    /*
+     * Run the program until the next break point.
+     * Returns:
+     *     DebugInfo - Information regarding the current state.
+     */
+    DebugInfo debug_continue();
+
+    /*
+     * Run the program until the next instruction.
+     * Returns:
+     *     DebugInfo - Information regarding the current state.
+     */
+    DebugInfo debug_step();
 
     /*
      * Report the results of running the kernel.

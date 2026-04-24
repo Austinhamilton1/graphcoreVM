@@ -6,6 +6,7 @@
 #include <vector>
 #include <fstream>
 #include <unordered_set>
+#include <chrono>
 
 #include "assembler.h"
 #include "program.h"
@@ -17,6 +18,7 @@ void print_help();
 int cmd_assemble(int argc, char **argv);
 int cmd_graph(int argc, char **argv);
 int cmd_run(int argc, char **argv);
+int cmd_shell(int argc, char **argv);
 
 int main(int argc, char **argv) {
     if(argc < 2) {
@@ -30,6 +32,7 @@ int main(int argc, char **argv) {
     if(cmd == "assemble") return cmd_assemble(argc-1, argv+1);
     if(cmd == "graph") return cmd_graph(argc-1, argv+1);
     if(cmd == "run") return cmd_run(argc-1, argv+1);
+    if(cmd == "shell") return cmd_shell(argc-1, argv+1);
 
     std::cerr << "Unknown command: '" << cmd << "'" << std::endl;
     return -1; 
@@ -51,20 +54,27 @@ void print_help() {
     std::cout << "\t- gcvm assemble [:options] {input_file}"                            << std::endl;
     std::cout << "\t- gcvm graph [:options] {input_file}"                               << std::endl;
     std::cout << "\t- gcvm run [:options]"                                              << std::endl;
+    std::cout << "\t- gcvm shell"                                                       << std::endl;
     std::cout << "================================================================="    << std::endl;
     std::cout << "Assemble:"                                                            << std::endl;
+    std::cout << "**Compile a plaintext assembly file**"                                << std::endl;
     std::cout << "\t- input_file - Plaintext assembly file"                             << std::endl;
     std::cout << "\t- -o option - Output file name (default: ./a.bc)"                   << std::endl;
     std::cout << "================================================================="    << std::endl;
     std::cout << "Graph:"                                                               << std::endl;
+    std::cout << "**Compile a plaintext graph file**"                                   << std::endl;
     std::cout << "\t- input_file - Plaintext graph file"                                << std::endl;
     std::cout << "\t- -o option - Output file name (default: ./a.g)"                    << std::endl;
     std::cout << "================================================================="    << std::endl;
     std::cout << "Run:"                                                                 << std::endl;
+    std::cout << "**Execute a graph kernel**"                                           << std::endl;
     std::cout << "\t- -b option - Input (compiled) bytecode file"                       << std::endl;
     std::cout << "\t- -g option - Input (compiled) graph file"                          << std::endl;
     std::cout << "\t- -c option - Input YAML configuration file"                        << std::endl;
     std::cout << "\t- -o option - Output file (default: stdout)"                        << std::endl;
+    std::cout << "================================================================="    << std::endl;
+    std::cout << "Shell:"                                                               << std::endl;
+    std::cout << "\t**Run an interactive shell**"                                       << std::endl;
     std::cout << "================================================================="    << std::endl;
 }
 
@@ -295,14 +305,28 @@ VMConfig load_config(const std::string &path) {
     // If seed is defined, configure seeds
     if(config["seed"]) {
         // Set default seed
-        if(config["seed"]["default"])
-            cfg.default_seed = config["seed"]["default"].as<double>();
+        if(config["seed"]["default"]) {
+            if(config["seed"]["default"].as<std::string>() == "inf") {
+                cfg.default_seed = std::numeric_limits<double>::infinity();
+            } else if(config["seed"]["default"].as<std::string>() == "-inf") {
+                cfg.default_seed = -std::numeric_limits<double>::infinity();
+            } else {
+                cfg.default_seed = config["seed"]["default"].as<double>();
+            }
+        }
 
         // Set seed overrides
         if(config["seed"]["overrides"]) {
             for(auto it : config["seed"]["overrides"]) {
                 uint32_t node = it.first.as<uint32_t>();
-                double val = it.second.as<double>();
+                double val = 0.0;
+                if(it.second.as<std::string>() == "inf") {
+                    val = std::numeric_limits<double>::infinity();
+                } else if(it.second.as<std::string>() == "-inf") {
+                    val = -std::numeric_limits<double>::infinity();
+                } else {
+                    val = it.second.as<double>();
+                }
                 cfg.seed_overrides[node] = val;
             }
         }
@@ -381,6 +405,9 @@ int cmd_run(int argc, char **argv) {
                 std::cerr << "Error: -o requires an argument\n";
                 return -1;
             }
+        } else {
+            std::cerr << "Error: invalid option: " << arg << std::endl;
+            return -1;
         }
     }
 
@@ -447,6 +474,125 @@ int cmd_run(int argc, char **argv) {
                 file << "Node " << v << ": " << results[v] << std::endl;
             }
             file << "============================" << std::endl;
+        }
+    }
+
+    return 0;
+}
+
+/*
+ * Statistics of the run of a GCVM instance.
+ */
+struct VMStats {
+    int64_t runtime = 0;
+};
+
+/*
+ * Run an interactive shell on the VM.
+ * Arguments:
+ *     int argc - Number of arguments.
+ *     char **argv - Arguments.
+ * Returns:
+ *     int - 0 on success, -1 on failure.
+ */
+int cmd_shell(int argc, char **argv) {
+    for(int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+
+        if(arg == "-h") {
+            print_help();
+            return 0;
+        } else {
+            std::cerr << "Error: invalid option: " << arg << std::endl;
+            return -1;
+        }
+    }
+
+    std::string line;
+
+    Program program;
+    Graph graph;
+    VMConfig config;
+    VMStats stats;
+    GCVM runtime;
+
+    while(true) {
+        std::cout << "gcvm> ";
+        if(!std::getline(std::cin, line)) break;
+
+        // Parse the shell commands
+        std::stringstream ss(line);
+        std::string cmd;
+        ss >> cmd;
+
+        if(cmd == "exit") break;
+        else if(cmd == "load") {
+            std::string type, file;
+            ss >> type >> file;
+
+            if(type == "program") {
+                program.from_file(file);
+                runtime.load_program(program);
+                std::cout << "Program loaded" << std::endl;
+            } else if(type == "graph") {
+                graph.build_from_file(file);
+                runtime.load_graph(graph);
+                std::cout << "Graph loaded" << std::endl;
+            } else if(type == "config") {
+                config = load_config(file);
+                std::cout << "Config loaded" << std::endl;
+            }
+        } else if(cmd == "run") {
+            // Set cofiguration parameters
+            for(uint32_t v = 0; v < graph.size(); v++) {
+                if(config.active_overrides.find(v) == config.active_overrides.end()) {
+                    runtime.set_active(v, config.default_active);
+                } else {
+                    runtime.set_active(v, config.active_overrides[v]);
+                }
+
+                if(config.seed_overrides.find(v) == config.seed_overrides.end()) {
+                    runtime.set_seed_self(v, config.default_seed);
+                } else {
+                    runtime.set_seed_self(v, config.seed_overrides[v]);
+                }
+            }
+
+            // Run the executable
+            auto start = std::chrono::high_resolution_clock::now();
+            runtime.run(config.jit);
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+            std::cout << "Done" << std::endl;
+            stats.runtime = duration.count();
+        } else if(cmd == "print") {
+            std::string sub;
+            ss >> sub;
+
+            if(sub == "node") {
+                uint32_t id;
+                ss >> id;
+                auto res = runtime.get_results();
+                std::cout << "Node " << id << ": " << res[id] << std::endl;
+            }
+        } else if(cmd == "stats") {
+            std::cout << "Stats:" << std::endl;
+            std::cout << "================================\n";
+            std::cout << "Last runtime: " << stats.runtime << " microseconds\n";
+            std::cout << "================================\n";
+        } else if(cmd == "debug") {
+            std::cout << "Debugger not implemented yet" << std::endl;
+        } else if(cmd == "help") {
+            std::cout << "Commands:" << std::endl;
+            std::cout << "\texit" << std::endl;
+            std::cout << "\tload [program|graph|config] {input_file}" << std::endl;
+            std::cout << "\trun" << std::endl;
+            std::cout << "\tprint [node] {node_id}" << std::endl;
+            std::cout << "\tstats" << std::endl;
+            std::cout << "\tdebug" << std::endl;
+            std::cout << "**Note: stats and debug are not fully implemented yet**" << std::endl;
+        } else {
+            std::cout << "Unknown command\n";
         }
     }
 

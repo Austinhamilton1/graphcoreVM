@@ -162,6 +162,10 @@ struct Program {
      *     const std::string& filename - Name of the bytecode file.
      */
     void from_file(const std::string& filename) {
+        code.clear();
+        constants.clear();
+        constant_map.clear();
+        
         std::ifstream file(filename, std::ios::binary);
 
         if(!file.is_open()) {

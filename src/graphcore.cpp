@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cstring>
 
 #include "graphcore.h"
 
@@ -22,6 +23,7 @@ void GCVM::load_graph(const Graph &graph) {
  */
 void GCVM::load_program(const Program &program) {
     this->program = program;
+    if(jit_compiled) jit_compiled = nullptr;
 }
 
 /*
