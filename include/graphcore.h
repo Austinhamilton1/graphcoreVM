@@ -177,6 +177,28 @@ private:
     void execute_vertex(Context &ctx, uint32_t vertex_id);
 
     /*
+     * Execute a single instruction on a vertex given its context and vertex ID.
+     * Arguments:
+     *     Context &ctx - Execute with this context (register values).
+     *     uint32_t vertex_id - Execute on this vertex.
+     */
+    void execute_instruction_vertex(Context &ctx, uint32_t vertex_id);
+
+    /*
+     * Check if debugging is finished.
+     */
+    void check_finished();
+
+    /*
+     * Snapshot of current state of the debugger.
+     * Arguments:
+     *     Context *ctx - Current context.
+     * Returns:
+     *     DebugInfo - Current state.
+     */
+    DebugInfo make_debug_info(Context *ctx);
+
+    /*
      * Compile parts of the graph kernel.
      */
     void compile();
@@ -229,6 +251,20 @@ public:
      *     int pc - Break at this PC (must be positive).
      */
     void debug_add_breakpoint(int pc);
+
+    /*
+     * Take a single step through the program.
+     * Returns:
+     *     DebugInfo - Current program state.
+     */
+    DebugInfo debug_step();
+
+    /*
+     * Continue through the program until the next break point.
+     * Returns:
+     *     DebugInfo - Current program state.
+     */
+    DebugInfo debug_continue();
 
     /*
      * Report the results of running the kernel.

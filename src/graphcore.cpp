@@ -704,6 +704,160 @@ void GCVM::debug_add_breakpoint(int pc) {
 }
 
 /*
+ * Execute a single instruction on a vertex given its context and vertex ID.
+ * Arguments:
+ *     Context &ctx - Execute with this context (register values).
+ *     uint32_t vertex_id - Execute on this vertex.
+ */
+void GCVM::execute_instruction_vertex(Context &ctx, uint32_t vertex_id) {
+    auto &inst = program.code[dbg.pc];
+
+    // Dispatch the instructions 
+    switch(inst.opcode()) {
+        case OPCODE_CONTROL: {
+            dbg.pc = exec_control(inst, ctx, dbg.pc);
+            break;
+        }
+        case OPCODE_ALU: {
+            exec_alu(inst, ctx);
+            break;
+        }
+        case OPCODE_MEMORY: {
+            exec_memory(inst, ctx, vertex_id);
+            break;
+        }
+        case OPCODE_GRAPH: {
+            dbg.pc = exec_graph(inst, ctx, vertex_id, dbg.pc);
+            break;
+        }
+        case OPCODE_SYSTEM: {
+            exec_system(inst);
+            break;
+        }
+    }
+
+    if(dbg.pc >= 0) dbg.pc++;
+}
+
+/*
+ * Check if debugging is finished.
+ */
+void GCVM::check_finished() {
+    // Check for true end condition (Program exhausted and (no active nodes or converged))
+    if(dbg.pc < 0 && dbg.current_vertex == graph.size()) {
+        // Update state
+        for(uint32_t v = 0; v < graph.size(); v++) {
+            vertices.v_self[v] = vertices.v_out[v];
+        }
+
+        // Update active vertices
+        if(update_active_vertices() == 0) {
+            dbg.finished = true;
+            return;
+        }
+
+        // Check for convergence
+        if(check_convergence()) {
+            dbg.finished = true;
+            return;
+        } 
+
+        // Not converged, keep running
+        dbg.pc = 0;
+        dbg.current_vertex = 0;
+        return;
+    }
+
+    // Move onto the next vertex
+    if(dbg.pc < 0) {
+        dbg.pc = 0;
+        dbg.current_vertex++;
+    }
+
+    // Not finished
+    dbg.finished = false;
+}
+
+/*
+ * Snapshot of current state of the debugger.
+ * Arguments:
+ *     Context *ctx - Current context.
+ * Returns:
+ *     DebugInfo - Current state.
+ */
+DebugInfo GCVM::make_debug_info(Context *ctx) {
+    DebugInfo info;
+
+    // Copy state
+    info.pc = dbg.pc;
+    info.vstate = &vertices;
+    info.update_value = updates.load();
+    info.finished = dbg.finished;
+
+    // Copy context
+    Context dbg_ctx;
+    if(ctx) {
+        std::memcpy(&dbg_ctx, ctx, sizeof(Context));
+        std::memcpy(dbg_ctx.regs, ctx->regs, R_COUNT * sizeof(double));
+    }
+    info.ctx = dbg_ctx;
+
+    return info;
+}
+
+/*
+ * Take a single step through the program.
+ * Returns:
+ *     DebugInfo - Current program state.
+ */
+DebugInfo GCVM::debug_step() {
+    if(dbg.finished) {
+        return make_debug_info(nullptr);
+    }
+
+    // Run a single instruction
+    Context ctx;
+    load_context(ctx, dbg.current_vertex);
+    execute_instruction_vertex(ctx, dbg.current_vertex);
+    store_context(ctx, dbg.current_vertex);
+
+    check_finished();
+
+    return make_debug_info(&ctx);
+}
+
+/*
+ * Continue through the program until the next break point.
+ * Returns:
+ *     DebugInfo - Current program state.
+ */
+DebugInfo GCVM::debug_continue() {
+    if(dbg.finished) {
+        return make_debug_info(nullptr);
+    }
+
+    Context ctx;
+    while(true) {
+        if(dbg.breakpoints.count(dbg.pc)) {
+            break;
+        }
+
+        // Run a single instruction
+        load_context(ctx, dbg.current_vertex);
+        execute_instruction_vertex(ctx, dbg.current_vertex);
+        store_context(ctx, dbg.current_vertex);
+
+        check_finished();
+
+        if(dbg.finished) {
+            break;
+        }
+    }
+
+    return make_debug_info(&ctx);
+}
+
+/*
  * Report the results of running the kernel.
  * Returns:
  *     const std::vector<double> & - Copy of the results calculated.
