@@ -694,6 +694,16 @@ void GCVM::run(bool should_compile) {
 }
 
 /*
+ * Set a break point in the kernel.
+ * Arguments:
+ *     int pc - Break at this PC (must be positive).
+ */
+void GCVM::debug_add_breakpoint(int pc) {
+    if(pc < 0) throw std::runtime_error("Breakpoints must break at positive PC");
+    dbg.breakpoints.insert(pc);
+}
+
+/*
  * Report the results of running the kernel.
  * Returns:
  *     const std::vector<double> & - Copy of the results calculated.

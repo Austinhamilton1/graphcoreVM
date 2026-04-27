@@ -12,12 +12,25 @@
 #include "program.h"
 #include "jit.h"
 
+/*
+ * Debugging information returned by debug functions.
+ */
 struct DebugInfo {
-    Context ctx;
-    VertexState *state;
-    uint32_t vertex_id;
-    uint32_t updates;
-    bool finished;
+    int pc;                 // Current program counter
+    Context ctx;            // Current context
+    VertexState *vstate;    // Current vertex state
+    uint32_t update_value;  // Current update value
+    bool finished;          // Is the program done for all vertices?
+};
+
+/*
+ * Manages state of debugging.
+ */
+struct Debugger {
+    std::unordered_set<int> breakpoints;    // List of break points
+    int pc = 0;                             // Current program counter
+    uint32_t current_vertex = 0;            // Current vertex
+    bool finished = false;                  // Is the program done for all vertices?
 };
 
 /* 
@@ -35,9 +48,7 @@ private:
     JITFunc jit_compiled;           // JIT compiled kernel
 
     /* Used for debugging. */
-    std::unordered_set<int> break_points;
-    int debug_pc;
-    uint32_t debug_vertex;
+    Debugger dbg;
 
     /*
      * Execute a CONTROL operation.
@@ -166,22 +177,13 @@ private:
     void execute_vertex(Context &ctx, uint32_t vertex_id);
 
     /*
-     * Execute a step of the kernel on a vertex.
-     * Arguments:
-     *     Context &ctx - Execute with this context (register values).
-     * Returns:
-     *     int - The PC after the current step.
-     */
-    int debug_vertex_step(Context &ctx);
-
-    /*
      * Compile parts of the graph kernel.
      */
     void compile();
 
 public:
     /* Default constructor and destructor. */
-    GCVM() : updates(0), jit_compiled(nullptr), debug_pc(0), debug_vertex(0) {}
+    GCVM() : updates(0), jit_compiled(nullptr) {}
     ~GCVM() = default;
 
     /*
@@ -224,23 +226,9 @@ public:
     /*
      * Set a break point in the kernel.
      * Arguments:
-     *     size_t pc - Break at this PC in the kernel.
+     *     int pc - Break at this PC (must be positive).
      */
-    void set_break_point(size_t pc);
-
-    /*
-     * Run the program until the next break point.
-     * Returns:
-     *     DebugInfo - Information regarding the current state.
-     */
-    DebugInfo debug_continue();
-
-    /*
-     * Run the program until the next instruction.
-     * Returns:
-     *     DebugInfo - Information regarding the current state.
-     */
-    DebugInfo debug_step();
+    void debug_add_breakpoint(int pc);
 
     /*
      * Report the results of running the kernel.
